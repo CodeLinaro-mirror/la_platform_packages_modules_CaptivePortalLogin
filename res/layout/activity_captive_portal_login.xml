@@ -4,17 +4,40 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     tools:context="com.android.captiveportallogin.CaptivePortalLoginActivity"
-    tools:ignore="MergeRootFrame">
-    <RelativeLayout
+    tools:ignore="MergeRootFrame" >
+
+    <LinearLayout
     android:layout_width="match_parent"
-    android:layout_height="match_parent" >
+    android:layout_height="match_parent"
+    android:orientation="vertical" >
 
-    <WebView
-        android:id="@+id/webview"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_alignParentBottom="false"
-        android:layout_alignParentRight="false" />
+      <FrameLayout
+          android:layout_width="match_parent"
+          android:layout_height="4dp" >
 
-</RelativeLayout>
+        <!-- Eliminates ProgressBar padding by boxing it into a 4dp high container -->
+        <ProgressBar
+            android:id="@+id/progress_bar"
+            style="@android:style/Widget.Material.Light.ProgressBar.Horizontal"
+            android:indeterminate="false"
+            android:max="100"
+            android:progress="0"
+            android:layout_gravity="center"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content" />
+      </FrameLayout>
+
+      <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipe_refresh"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+        <WebView
+              android:id="@+id/webview"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:layout_alignParentBottom="false"
+              android:layout_alignParentRight="false" />
+      </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+    </LinearLayout>
 </FrameLayout>
