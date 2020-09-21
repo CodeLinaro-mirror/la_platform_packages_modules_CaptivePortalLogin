@@ -59,6 +59,7 @@ import android.view.LayoutInflater;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.View;
+import android.view.ViewGroup;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.SslErrorHandler;
@@ -150,6 +151,13 @@ public class CaptivePortalLoginActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mCaptivePortal = getIntent().getParcelableExtra(ConnectivityManager.EXTRA_CAPTIVE_PORTAL);
+        // Null CaptivePortal is unexpected. The following flow will need to access mCaptivePortal
+        // to communicate with system. Thus, finish the activity.
+        if (mCaptivePortal == null) {
+            Log.e(TAG, "Unexpected null CaptivePortal");
+            finish();
+            return;
+        }
         logMetricsEvent(MetricsEvent.ACTION_CAPTIVE_PORTAL_LOGIN_ACTIVITY);
         mCm = getSystemService(ConnectivityManager.class);
         mDpm = getSystemService(DevicePolicyManager.class);
@@ -256,9 +264,13 @@ public class CaptivePortalLoginActivity extends Activity {
     }
 
     private boolean isDismissPortalEnabled() {
-        return Build.VERSION.SDK_INT > Build.VERSION_CODES.Q
+        return isAtLeastR()
                 || (Build.VERSION.SDK_INT == Build.VERSION_CODES.Q
                 && !"REL".equals(Build.VERSION.CODENAME));
+    }
+
+    private boolean isAtLeastR() {
+        return Build.VERSION.SDK_INT > Build.VERSION_CODES.Q;
     }
 
     // Find WebView's proxy BroadcastReceiver and prompt it to read proxy system properties.
@@ -359,6 +371,9 @@ public class CaptivePortalLoginActivity extends Activity {
             webview.stopLoading();
             webview.setWebViewClient(null);
             webview.setWebChromeClient(null);
+            // According to the doc of WebView#destroy(), webview should be removed from the view
+            // system before calling the WebView#destroy().
+            ((ViewGroup) webview.getParent()).removeView(webview);
             webview.destroy();
         }
         if (mNetworkCallback != null) {
@@ -677,7 +692,7 @@ public class CaptivePortalLoginActivity extends Activity {
         // see the log-in page by browser. So, hide the link which is used to open the browser.
         @VisibleForTesting
         String getVpnMsgOrLinkToBrowser() {
-            if (isAlwaysOnVpnEnabled() || hasVpnNetwork()) {
+            if (hasVpnNetwork() || (isAtLeastR() && isAlwaysOnVpnEnabled())) {
                 final String vpnWarning = getString(R.string.no_bypass_error_vpnwarning);
                 return "  <div class=vpnwarning>" + vpnWarning + "</div><br>";
             }
