@@ -20,6 +20,7 @@ import static android.net.ConnectivityManager.EXTRA_CAPTIVE_PORTAL_PROBE_SPEC;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED;
 
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.CAPTIVE_PORTAL_CUSTOM_TABS;
+import static com.android.captiveportallogin.CaptivePortalLoginFlags.USE_ANY_CUSTOM_TAB_PROVIDER;
 import static com.android.captiveportallogin.DownloadService.isDirectlyOpenType;
 
 import android.app.Activity;
@@ -37,6 +38,7 @@ import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Insets;
+import android.graphics.Rect;
 import android.net.CaptivePortal;
 import android.net.CaptivePortalData;
 import android.net.ConnectivityManager;
@@ -120,6 +122,9 @@ import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.Random;
 import java.util.concurrent.Executor;
@@ -138,7 +143,6 @@ public class CaptivePortalLoginActivity extends Activity {
     private static final String FILE_PROVIDER_AUTHORITY =
             "com.android.captiveportallogin.fileprovider";
     // This should match the path name in the FileProvider paths XML.
-    private static final String USE_ANY_CUSTOM_TAB_PROVIDER = "use_any_custom_tab_provider";
     @VisibleForTesting
     static final String FILE_PROVIDER_DOWNLOAD_PATH = "downloads";
     private static final int NO_DIRECTLY_OPEN_TASK_ID = -1;
@@ -237,8 +241,18 @@ public class CaptivePortalLoginActivity extends Activity {
             Log.d(TAG, "CustomTabs service connected");
             final CustomTabsSession session = client.newSession(mParent.mPersistentState.mCallback);
             // TODO : recompute available space when the app changes sizes
-            final int availableSpace = mParent.findViewById(
-                                R.id.custom_tab_header_remaining_space).getHeight();
+            final View remainingSpaceView = mParent.findViewById(
+                    R.id.custom_tab_header_remaining_space);
+            int availableSpace = remainingSpaceView.getHeight();
+            if (availableSpace < 100) {
+                // In some situations the layout pass is not done ? Not sure why yet but
+                // as a stopgap use a fixed value
+                final Rect windowSize =
+                        mParent.getWindowManager().getCurrentWindowMetrics().getBounds();
+                final int top = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
+                        96 /* dp */, mParent.getResources().getDisplayMetrics());
+                availableSpace = (windowSize.bottom - windowSize.top) - top;
+            }
             final int size = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
                     24 /* dp */, mParent.getResources().getDisplayMetrics());
             final Bitmap emptyIcon = Bitmap.createBitmap(size /* width */, size /* height */,
@@ -385,6 +399,12 @@ public class CaptivePortalLoginActivity extends Activity {
         return DeviceConfigUtils.isCaptivePortalLoginFeatureEnabled(getApplicationContext(), name);
     }
 
+    @VisibleForTesting
+    boolean getDeviceConfigPropertyBoolean(final String name, boolean defaultValue) {
+        return DeviceConfigUtils.getDeviceConfigPropertyBoolean(
+                DeviceConfig.NAMESPACE_CAPTIVEPORTALLOGIN, name, defaultValue);
+    }
+
     private void maybeStartPendingDownloads() {
         ensureRunningOnMainThread();
 
@@ -462,14 +482,24 @@ public class CaptivePortalLoginActivity extends Activity {
     String getAnyCustomTabsProviderPackage() {
         // Get all apps that can handle VIEW intents and Custom Tab service connections.
         final Intent activityIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("http://"));
+        final List<String> packages = new ArrayList<>();
         for (final ResolveInfo resolveInfo : getPackageManager()
                 .queryIntentActivities(activityIntent, PackageManager.MATCH_ALL)) {
             if (null == resolveInfo || null == resolveInfo.activityInfo) continue;
             if (isMultiNetworkingSupportedByProvider(resolveInfo.activityInfo.packageName)) {
-                return resolveInfo.activityInfo.packageName;
+                packages.add(resolveInfo.activityInfo.packageName);
             }
         }
-        return null;
+        if (packages.isEmpty()) return null;
+        final List<String> priorities = Arrays.asList(".dev", ".canary", ".beta");
+        for (String priority : priorities) {
+            for (String packageName : packages) {
+                if (packageName.endsWith(priority)) {
+                    return packageName;
+                }
+            }
+        }
+        return packages.get(0);
     }
 
     @VisibleForTesting
@@ -605,13 +635,11 @@ public class CaptivePortalLoginActivity extends Activity {
 
         Log.i(TAG, "Default browser doesn't support custom tabs");
 
-        // Intentionally no UX way to set this. adb command is the only way
-        // adb shell device_config put captive_portal_login use_any_custom_tab_provider true
-        final boolean useAnyCustomTabProvider = DeviceConfigUtils.getDeviceConfigPropertyBoolean(
-                DeviceConfig.NAMESPACE_CAPTIVEPORTALLOGIN,
-                USE_ANY_CUSTOM_TAB_PROVIDER,
-                false
-        );
+        // Intentionally no UX way to set this. It is useful for verifying the test-only feature
+        // with the early development version of browser.
+        final boolean useAnyCustomTabProvider =
+                getDeviceConfigPropertyBoolean(USE_ANY_CUSTOM_TAB_PROVIDER,
+                        false /* defaultValue */);
         if (!useAnyCustomTabProvider) return null;
         return getAnyCustomTabsProviderPackage();
     }
