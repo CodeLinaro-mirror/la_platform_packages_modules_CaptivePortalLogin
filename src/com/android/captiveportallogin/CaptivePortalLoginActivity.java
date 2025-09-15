@@ -22,15 +22,14 @@ import static android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED;
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.CAPTIVE_PORTAL_CUSTOM_TABS;
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.USE_ANY_CUSTOM_TAB_PROVIDER;
 import static com.android.captiveportallogin.DownloadService.isDirectlyOpenType;
+import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_SUCCESS;
+import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_UNWANTED;
+import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_WANTED_AS_IS;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_FEATURE_NOT_ENABLED;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_NOT_SUPPORT_CCT;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_NOT_SUPPORT_MULTI_NETWORK;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_PRIVATE_DNS_ENABLED_V_AND_BELOW;
-import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_RUNNING_ANDROID_R;
-import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_USE_OLD_INTERFACE;
-import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_SUCCESS;
-import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_UNWANTED;
-import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_WANTED_AS_IS;
+import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_USE_CLASSIC_VIEW;
 
 import android.app.Activity;
 import android.app.AlertDialog;
@@ -53,7 +52,6 @@ import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Insets;
-import android.graphics.Rect;
 import android.net.CaptivePortal;
 import android.net.CaptivePortalData;
 import android.net.ConnectivityManager;
@@ -112,6 +110,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.window.OnBackInvokedDispatcher;
 
 import androidx.annotation.ChecksSdkIntAtLeast;
 import androidx.annotation.GuardedBy;
@@ -188,16 +187,18 @@ public class CaptivePortalLoginActivity extends Activity {
             "com.android.captiveportallogin.CUSTOM_TABS_MENU_ITEM_DO_NOT_USE_THIS_NETWORK_CLICKED";
     private static final String ACTION_CUSTOM_TABS_MENU_ITEM_USE_THIS_NETWORK_CLICKED =
             "com.android.captiveportallogin.CUSTOM_TABS_MENU_ITEM_USE_THIS_NETWORK_CLICKED";
-    private static final String ACTION_CUSTOM_TABS_MENU_ITEM_USE_OLD_INTERFACE_CLICKED =
-            "com.android.captiveportallogin.CUSTOM_TABS_MENU_ITEM_USE_OLD_INTERFACE_CLICKED";
+    private static final String ACTION_CUSTOM_TABS_MENU_ITEM_USE_CLASSIC_VIEW_CLICKED =
+            "com.android.captiveportallogin.CUSTOM_TABS_MENU_ITEM_USE_CLASSIC_VIEW_CLICKED";
     @VisibleForTesting
-    public static final String EXTRA_USE_OLD_INTERFACE =
-            "com.android.captiveportallogin.EXTRA_USE_OLD_INTERFACE";
+    public static final String EXTRA_USE_CLASSIC_VIEW =
+            "com.android.captiveportallogin.EXTRA_USE_CLASSIC_VIEW";
     private static final String EXTRA_CUSTOM_TABS_INSTANCE_TOKEN =
             "com.android.captiveportallogin.CUSTOM_TABS_INSTANCE_TOKEN";
+    private static final String CUSTOM_TAB_EXTRA_KEEPALIVE_SERVICE =
+            "android.support.customtabs.extra.KEEP_ALIVE";
     private static final int DO_NOT_USE_THIS_NETWORK_PENDING_INTENT_REQUEST_CODE = 1001;
     private static final int USE_THIS_NETWORK_PENDING_INTENT_REQUEST_CODE = 1002;
-    private static final int USE_OLD_INTERFACE_PENDING_INTENT_REQUEST_CODE = 1003;
+    private static final int USE_CLASSIC_VIEW_PENDING_INTENT_REQUEST_CODE = 1003;
 
     private URL mUrl;
     private String mUrlString;
@@ -272,10 +273,12 @@ public class CaptivePortalLoginActivity extends Activity {
             if (navigationEvent == TAB_HIDDEN) {
                 // Run on UI thread to make sure mIsResumed is correctly visible.
                 mParent.runOnUiThread(() -> {
-                    // The tab is hidden when the browser's activity is hidden : screen off,
+                    // The tab is hidden when the browser's activity is hidden: screen off,
                     // home button, or press the close button on the tab. In the last case,
                     // close the app. The activity behind the tab is only resumed in that case.
-                    if (mParent.mIsResumed) mParent.done(Result.DISMISSED);
+                    if (mParent.mIsResumed) {
+                        mParent.finishAndRemoveTask();
+                    }
                 });
             }
         }
@@ -289,7 +292,7 @@ public class CaptivePortalLoginActivity extends Activity {
         extras.putString(ConnectivityManager.EXTRA_CAPTIVE_PORTAL_PROBE_SPEC,
                 mProbeSpecString);
         extras.putString(ConnectivityManager.EXTRA_CAPTIVE_PORTAL_USER_AGENT, mUserAgent);
-        extras.putBoolean(EXTRA_USE_OLD_INTERFACE, true);
+        extras.putBoolean(EXTRA_USE_CLASSIC_VIEW, true);
         startActivityFromCustomTabsMenuItem(mNetwork, extras);
     }
 
@@ -312,7 +315,7 @@ public class CaptivePortalLoginActivity extends Activity {
                 done(Result.UNWANTED);
             } else if (action.equals(ACTION_CUSTOM_TABS_MENU_ITEM_USE_THIS_NETWORK_CLICKED)) {
                 done(Result.WANTED_AS_IS);
-            } else if (action.equals(ACTION_CUSTOM_TABS_MENU_ITEM_USE_OLD_INTERFACE_CLICKED)) {
+            } else if (action.equals(ACTION_CUSTOM_TABS_MENU_ITEM_USE_CLASSIC_VIEW_CLICKED)) {
                 relaunchActivityWithWebview();
             } else {
                 Log.e(TAG, "unknown menu action " + action);
@@ -338,23 +341,6 @@ public class CaptivePortalLoginActivity extends Activity {
                 @NonNull CustomTabsClient client) {
             Log.d(TAG, "CustomTabs service connected");
             final CustomTabsSession session = client.newSession(mParent.mPersistentState.mCallback);
-            // TODO : recompute available space when the app changes sizes
-            final View remainingSpaceView = mParent.findViewById(
-                    R.id.custom_tab_header_remaining_space);
-            int availableSpace = remainingSpaceView.getHeight();
-            if (availableSpace < 100) {
-                // If for some reason the height of the view can't be obtained, do not crash.
-                // This used to happen when this code would run before the first layout pass.
-                // This bug should be fixed now, but layout is notoriously difficult to get and
-                // if for any reason there is still an issue it is better to use this estimate
-                // than to crash.
-                Log.wtf(TAG, "Remaining space can't be obtained. Layout not done ?");
-                final Rect windowSize =
-                        mParent.getWindowManager().getCurrentWindowMetrics().getBounds();
-                final int top = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
-                        96 /* dp */, mParent.getResources().getDisplayMetrics());
-                availableSpace = (windowSize.bottom - windowSize.top) - top;
-            }
             final int size = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
                     24 /* dp */, mParent.getResources().getDisplayMetrics());
             final Bitmap emptyIcon = Bitmap.createBitmap(size /* width */, size /* height */,
@@ -371,9 +357,6 @@ public class CaptivePortalLoginActivity extends Activity {
                     // Do not show a title to avoid pages pretend they are part of the Android
                     // system.
                     .setShowTitle(false /* showTitle */)
-                    // Have the tab take up the available space under the header.
-                    .setInitialActivityHeightPx(availableSpace,
-                            CustomTabsIntent.ACTIVITY_HEIGHT_FIXED)
                     // Don't show animations, because there is no content to animate from or to in
                     // this activity. As such, set the res IDs to zero, which code for no animation.
                     .setStartAnimations(mParent, 0, 0)
@@ -403,6 +386,8 @@ public class CaptivePortalLoginActivity extends Activity {
                 builder.addMenuItem(item.first, item.second);
             }
             final CustomTabsIntent customTabsIntent = builder.build();
+            customTabsIntent.intent.putExtra(CUSTOM_TAB_EXTRA_KEEPALIVE_SERVICE,
+                    new Intent(mParent.getApplicationContext(), CustomTabsKeepAliveService.class));
             // Remove Referrer Header from HTTP probe packet by setting an empty Uri
             // instance in EXTRA_REFERRER, make sure users using custom tabs have the
             // same experience as the custom tabs browser.
@@ -809,7 +794,7 @@ public class CaptivePortalLoginActivity extends Activity {
      *
      *    - menu item 0: "Do not use this network"
      *    - menu item 1: "Use this network as is"
-     *    - menu item 2: "Use old interface"
+     *    - menu item 2: "Use classic view"
      */
     private List<Pair<String, PendingIntent>> getCustomTabsMenuItems() {
         final Resources resources = getResources();
@@ -823,8 +808,8 @@ public class CaptivePortalLoginActivity extends Activity {
                 USE_THIS_NETWORK_PENDING_INTENT_REQUEST_CODE
         );
         final PendingIntent pendingIntent2 = createPendingIntentForMenuItem(
-                ACTION_CUSTOM_TABS_MENU_ITEM_USE_OLD_INTERFACE_CLICKED,
-                USE_OLD_INTERFACE_PENDING_INTENT_REQUEST_CODE
+                ACTION_CUSTOM_TABS_MENU_ITEM_USE_CLASSIC_VIEW_CLICKED,
+                USE_CLASSIC_VIEW_PENDING_INTENT_REQUEST_CODE
         );
         menuItems.add(new Pair<>(
                 resources.getString(R.string.action_do_not_use_network),
@@ -833,7 +818,7 @@ public class CaptivePortalLoginActivity extends Activity {
                 resources.getString(R.string.action_use_network),
                 pendingIntent1));
         menuItems.add(new Pair<>(
-                resources.getString(R.string.action_use_old_interface),
+                resources.getString(R.string.action_use_classic_view),
                 pendingIntent2));
         return menuItems;
     }
@@ -880,7 +865,7 @@ public class CaptivePortalLoginActivity extends Activity {
         final IntentFilter filter = new IntentFilter();
         filter.addAction(ACTION_CUSTOM_TABS_MENU_ITEM_DO_NOT_USE_THIS_NETWORK_CLICKED);
         filter.addAction(ACTION_CUSTOM_TABS_MENU_ITEM_USE_THIS_NETWORK_CLICKED);
-        filter.addAction(ACTION_CUSTOM_TABS_MENU_ITEM_USE_OLD_INTERFACE_CLICKED);
+        filter.addAction(ACTION_CUSTOM_TABS_MENU_ITEM_USE_CLASSIC_VIEW_CLICKED);
         registerReceiver(receiver,
                 filter,
                 null, /* broadcastPermission */
@@ -973,13 +958,23 @@ public class CaptivePortalLoginActivity extends Activity {
 
         maybeDeleteDirectlyOpenFile();
 
-        final boolean forceWebview = getIntent().getBooleanExtra(EXTRA_USE_OLD_INTERFACE, false);
+        final boolean forceWebview = getIntent().getBooleanExtra(EXTRA_USE_CLASSIC_VIEW, false);
         final String customTabsProviderPackageName = getCustomTabsProviderPackageIfEnabled();
         mUsingCustomTabs = !forceWebview && customTabsProviderPackageName != null;
         if (!mUsingCustomTabs) {
             if (forceWebview) {
                 mCaptivePortalLoginMetrics.setReason(
-                        CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_USE_OLD_INTERFACE);
+                        CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_USE_CLASSIC_VIEW);
+            }
+            if (SdkLevel.isAtLeastB()) {
+                getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                        OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+                        () -> {
+                            if (!webViewHandleBackPress()) {
+                                finishAfterTransition();
+                            }
+                        }
+                );
             }
             initializeWebView();
         } else {
@@ -1204,13 +1199,22 @@ public class CaptivePortalLoginActivity extends Activity {
         return true;
     }
 
-    @Override
-    public void onBackPressed() {
+    private boolean webViewHandleBackPress() {
         final WebView myWebView = findViewById(R.id.webview);
         // The web view is null if the app is using custom tabs
         if (null != myWebView && myWebView.canGoBack() && mWebViewClient.allowBack()) {
             myWebView.goBack();
+            return true;
         } else {
+            return false;
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        // This method is not being called from target SDK 36+. In SDK 36+
+        // registerOnBackInvokedCallback() is used instead.
+        if (!webViewHandleBackPress()) {
             super.onBackPressed();
         }
     }
