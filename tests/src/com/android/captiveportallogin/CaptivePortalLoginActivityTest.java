@@ -125,7 +125,6 @@ import androidx.browser.customtabs.EngagementSignalsCallback;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.espresso.intent.Intents;
 import androidx.test.espresso.web.webdriver.Locator;
-import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.filters.SdkSuppress;
 import androidx.test.filters.SmallTest;
 import androidx.test.uiautomator.By;
@@ -136,6 +135,7 @@ import androidx.test.uiautomator.UiSelector;
 import com.android.testutils.DevSdkIgnoreRule;
 import com.android.testutils.DevSdkIgnoreRule.IgnoreAfter;
 import com.android.testutils.DevSdkIgnoreRule.IgnoreUpTo;
+import com.android.testutils.DevSdkIgnoreRunner;
 import com.android.testutils.TestNetworkTracker;
 import com.android.testutils.com.android.testutils.SetFeatureFlagsRule;
 import com.android.testutils.com.android.testutils.SetFeatureFlagsRule.FeatureFlag;
@@ -167,7 +167,8 @@ import java.util.function.BooleanSupplier;
 
 import fi.iki.elonen.NanoHTTPD;
 
-@RunWith(AndroidJUnit4.class)
+@RunWith(DevSdkIgnoreRunner.class)
+@IgnoreUpTo(Build.VERSION_CODES.R)
 @SmallTest
 public class CaptivePortalLoginActivityTest {
     private static final String TEST_URL = "http://android.test.com";
