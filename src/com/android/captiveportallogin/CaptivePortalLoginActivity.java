@@ -147,7 +147,6 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1183,9 +1182,7 @@ public class CaptivePortalLoginActivity extends Activity {
                 }
             }
         }
-        final Path parsedPath = Paths.get(path.toURI());
-        Log.d(TAG, "Cleaning up " + parsedPath);
-        return Files.deleteIfExists(parsedPath);
+        return Files.deleteIfExists(Paths.get(path.toURI()));
     }
 
     @VisibleForTesting

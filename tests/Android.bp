@@ -19,30 +19,19 @@ package {
     default_applicable_licenses: ["Android-Apache-2.0"],
 }
 
-android_test {
-    name: "CaptivePortalLoginTests",
-    defaults: [
-        "framework-connectivity-test-defaults",
-    ],
+android_library {
+    name: "CaptivePortalLoginTestsLib",
+    defaults: ["framework-connectivity-test-defaults"],
     srcs: [
         "src/**/*.java",
         "src/**/*.kt",
     ],
-    platform_apis: true,
-    compile_multilib: "both",
     min_sdk_version: "31",
-    target_sdk_version: "36", // Keep in sync with CaptivePortalLogin
-    test_suites: [
-        "general-tests",
-        "mts-networking",
-    ],
-    test_config: "AndroidTest.xml",
-
     static_libs: [
         "androidx.test.rules",
         "androidx.test.uiautomator_uiautomator",
         "mockito-target-minus-junit4",
-        "CaptivePortalLoginTestLib",
+        "CaptivePortalLoginLib",
         "android.test.runner-minus-junit",
         "androidx.test.core",
         "androidx.test.espresso.intents",
@@ -58,9 +47,45 @@ android_test {
         "android.test.base.stubs",
         "android.test.mock.stubs",
     ],
-    // If CaptivePortalLoginActivityTest wants to run on Q device, it needs to set sdk_version for
-    // using the portable JNI libraries.
-    // jni_uses_sdk_apis is a workaround for CaptivePortalLoginActivityTest to run on Q device.
-    // See b/154665579 to get more detail.
-    jni_uses_sdk_apis: true,
+    visibility: ["//visibility:private"],
+}
+
+android_test {
+    name: "CaptivePortalLoginTests",
+    defaults: ["framework-connectivity-test-defaults"],
+    platform_apis: true,
+    compile_multilib: "both",
+    min_sdk_version: "31",
+    target_sdk_version: "36", // Keep in sync with CaptivePortalLogin
+    test_suites: [
+        "general-tests",
+        "mts-networking",
+    ],
+    test_config: "AndroidTest.xml",
+    static_libs: [
+        "CaptivePortalLoginTestsLib",
+    ],
+    jarjar_rules: ":CaptivePortalLoginTestsJarJarRules",
+}
+
+java_genrule {
+    name: "CaptivePortalLoginTestsJarJarRules",
+    tool_files: [
+        ":CaptivePortalLoginTestsLib{.jar}",
+        ":CaptivePortalLoginJarJarExcludes",
+        "test-jarjar-excludes.txt",
+    ],
+    tools: [
+        "jarjar-rules-generator",
+    ],
+    out: ["CaptivePortalLoginJarJarRules.txt"],
+    cmd: "$(location jarjar-rules-generator) " +
+        "$(location :CaptivePortalLoginTestsLib{.jar}) " +
+        "--excludes $(location :CaptivePortalLoginJarJarExcludes) " +
+        "--excludes $(location test-jarjar-excludes.txt) " +
+        "--prefix com.android.captiveportallogin " +
+        "--output $(out)",
+    visibility: [
+        "//packages/modules/CaptivePortalLogin:__subpackages__",
+    ],
 }
