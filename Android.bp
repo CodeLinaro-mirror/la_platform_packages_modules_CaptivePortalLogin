@@ -44,6 +44,7 @@ android_library {
         "androidx.browser_browser",
         "androidx.legacy_legacy-support-core-ui",
         "captiveportal-lib",
+        "com.android.captiveportallogin.flags.flags-aconfig-java",
         "metrics-constants-protos",
         "modules-utils-build",
         "net-utils-connectivity-apks",
