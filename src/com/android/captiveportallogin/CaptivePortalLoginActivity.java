@@ -133,6 +133,7 @@ import androidx.browser.customtabs.EngagementSignalsCallback;
 import androidx.core.content.FileProvider;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
+import com.android.captiveportallogin.flags.Flags;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.modules.utils.build.SdkLevel;
 import com.android.net.module.util.CollectionUtils;
@@ -599,6 +600,11 @@ public class CaptivePortalLoginActivity extends Activity {
     }
 
     @VisibleForTesting
+    boolean isCustomTabsEnabledThroughMainlineFlag() {
+        return Flags.captivePortalCustomTabs();
+    }
+
+    @VisibleForTesting
     boolean getDeviceConfigPropertyBoolean(final String name, boolean defaultValue) {
         return DeviceConfigUtils.getDeviceConfigPropertyBoolean(
                 DeviceConfig.NAMESPACE_CAPTIVEPORTALLOGIN, name, defaultValue);
@@ -1007,8 +1013,21 @@ public class CaptivePortalLoginActivity extends Activity {
             mVenueFriendlyName = getVenueFriendlyName(capportData);
             optedInToCustomTabs = isOptedInToCustomTabs(capportData);
         }
-        mCaptivePortalCustomTabsEnabled = isFeatureEnabled(CAPTIVE_PORTAL_CUSTOM_TABS)
-                || optedInToCustomTabs;
+
+        // Custom tabs can be enabled in three ways:
+        //  1) By pushing the legacy CAPTIVE_PORTAL_CUSTOM_TABS flag to the device
+        //     (for droidfood population).
+        //  2) When the captive portal operator opts in via the capport API (for early adoption).
+        //  3) Through the mainline beta flag (for public rollout).
+        final boolean customTabsFeatureEnabled = isFeatureEnabled(CAPTIVE_PORTAL_CUSTOM_TABS)
+                || optedInToCustomTabs
+                || isCustomTabsEnabledThroughMainlineFlag();
+
+        // The feature can be force-disabled via a kill switch, useful in case of severe issues.
+        final boolean isCustomTabsFeatureKillSwitchOff = isFeatureNotChickenedOut(
+                CAPTIVE_PORTAL_CUSTOM_TABS);
+        mCaptivePortalCustomTabsEnabled =
+                isCustomTabsFeatureKillSwitchOff && customTabsFeatureEnabled;
         mFullCustomTabEnabled = mCaptivePortalCustomTabsEnabled && isFeatureNotChickenedOut(
                 USE_FULL_CUSTOM_TAB);
         mUserAgent =
