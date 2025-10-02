@@ -601,7 +601,7 @@ public class CaptivePortalLoginActivity extends Activity {
 
     @VisibleForTesting
     boolean isCustomTabsEnabledThroughMainlineFlag() {
-        return Flags.captivePortalCustomTabs();
+        return Flags.captivePortalCustomTabsPublic();
     }
 
     @VisibleForTesting
@@ -1105,6 +1105,9 @@ public class CaptivePortalLoginActivity extends Activity {
             }
             initializeWebView();
         } else {
+            if (mFullCustomTabEnabled) {
+                setTheme(androidx.appcompat.R.style.Theme_AppCompat_DayNight_Dialog_Alert);
+            }
             enableEdgeToEdge();
 
             if (mCustomTabsMenuItemReceiver == null) {
@@ -1112,7 +1115,11 @@ public class CaptivePortalLoginActivity extends Activity {
                 registerCustomTabsMenuItemBroadcastReceiver(mCustomTabsMenuItemReceiver);
             }
 
-            initializeCustomTabHeader();
+            if (mFullCustomTabEnabled) {
+                // full custom tab has the transparent style, only partial custom tab has the header
+            } else {
+                initializeCustomTabHeader();
+            }
             if (mPersistentState.mInstanceToken == null) {
                 mPersistentState.mInstanceToken = new Binder();
             }
@@ -1138,9 +1145,14 @@ public class CaptivePortalLoginActivity extends Activity {
                         mPersistentState.mServiceConnection = connection;
                     });
 
-            final View remainingSpaceView = findViewById(R.id.custom_tab_header_remaining_space);
-            remainingSpaceView.getViewTreeObserver().addOnGlobalLayoutListener(
-                    () -> layoutDone.complete(true));
+            if (mFullCustomTabEnabled) {
+                layoutDone.complete(true);
+            } else {
+                final View remainingSpaceView = findViewById(
+                        R.id.custom_tab_header_remaining_space);
+                remainingSpaceView.getViewTreeObserver().addOnGlobalLayoutListener(
+                        () -> layoutDone.complete(true));
+            }
             if (mPersistentState.mServiceConnection != null) {
                 mPersistentState.mServiceConnection.reparent(this);
                 serviceConnected.complete(mPersistentState.mServiceConnection);
