@@ -26,6 +26,18 @@
         <option name="install-arg" value="-t" />
     </target_preparer>
 
+    <!-- Skip Chrome first run experience. -->
+    <target_preparer class="com.android.tradefed.targetprep.RunCommandTargetPreparer">
+        <option name="run-command" value="touch /data/local/tmp/chrome-command-line"/>
+    <!--  TODO: add `&#45;&#45;disable-fre` flag and stop using engagement signals.-->
+        <option name="run-command" value="echo 'chrome --no-default-browser-check --no-first-run' > /data/local/tmp/chrome-command-line"/>
+        <!-- Grant notification permission to skip the enable notification popup-->
+        <option name="run-command" value="pm grant com.android.chrome android.permission.POST_NOTIFICATIONS"/>
+        <!--  Stop chrome to ensure flags take effect next time chrome runs.-->
+        <option name="run-command" value="am force-stop com.android.chrome"/>
+        <option name="teardown-command" value="rm /data/local/tmp/chrome-command-line"/>
+    </target_preparer>
+
     <test class="com.android.tradefed.testtype.AndroidJUnitTest" >
         <option name="package" value="com.android.captiveportallogin.tests" />
         <option name="runner" value="androidx.test.runner.AndroidJUnitRunner" />
