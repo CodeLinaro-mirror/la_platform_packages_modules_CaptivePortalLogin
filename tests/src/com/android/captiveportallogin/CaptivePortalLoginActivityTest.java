@@ -459,8 +459,8 @@ public class CaptivePortalLoginActivityTest {
         };
     }
 
-    private static UiSelector makeMoreButtonSelector() {
-        return new UiSelector().descriptionContains("Customize and control");
+    private static BySelector makeMoreButtonSelector() {
+        return By.res("com.android.chrome:id/menu_button");
     }
 
     private static boolean tryClickElement(UiDevice device, BySelector selector) {
@@ -496,8 +496,12 @@ public class CaptivePortalLoginActivityTest {
         context.startActivity(launchIntent);
 
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
-        final UiSelector moreButton = makeMoreButtonSelector();
+        final BySelector moreButton = makeMoreButtonSelector();
         final List<BySelector> trySelectors = List.of(
+                // "Accept & continue" button on the welcome screen
+                By.res("com.android.chrome:id/terms_accept"),
+                // "No thanks" button on the sign-in screen
+                By.res("com.android.chrome:id/negative_button"),
                 // Sign in screen
                 By.res("com.android.chrome:id/signin_fre_dismiss_button"),
                 // Privacy sandbox screen
@@ -507,7 +511,8 @@ public class CaptivePortalLoginActivityTest {
         // Try at least (number of screens) times to dismiss setup screens, by trying to click
         // each of the dismiss buttons
         for (int setupScreenIndex = 0; setupScreenIndex < trySelectors.size(); setupScreenIndex++) {
-            if (device.findObject(moreButton).exists()) {
+            device.waitForIdle();
+            if (device.findObject(moreButton) != null) {
                 break;
             }
             for (BySelector selector : trySelectors) {
@@ -1547,11 +1552,11 @@ public class CaptivePortalLoginActivityTest {
 
     private void findMoreButtonAndClickTheMenuItem(final int menuItemIndex) throws Exception {
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
-        final UiSelector moreButtonSelector = makeMoreButtonSelector();
-        final UiObject moreButton = device.findObject(moreButtonSelector);
-        // TODO: investigate why the more button is not found on certain device. see b/428907299.
-        assumeTrue("The Custom Tab more button was not found.",
-                moreButton.waitForExists(TEST_TIMEOUT_MS));
+        device.waitForIdle();
+        final BySelector moreButtonSelector = makeMoreButtonSelector();
+        final UiObject2 moreButton = device.findObject(moreButtonSelector);
+        assertTrue("The Custom Tab more button was not found.", moreButton != null);
+
         moreButton.click();
 
         device.waitForIdle();
@@ -1563,7 +1568,7 @@ public class CaptivePortalLoginActivityTest {
         final UiSelector menuItemSelector =
                 new UiSelector().className("android.widget.TextView").instance(menuItemIndex);
         final UiObject menuItem = device.findObject(menuItemSelector);
-        assumeTrue("The expected menu item was not found.",
+        assertTrue("The expected menu item was not found.",
                 menuItem.waitForExists(TEST_TIMEOUT_MS));
         menuItem.click();
 
