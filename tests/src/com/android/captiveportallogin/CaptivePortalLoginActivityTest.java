@@ -74,6 +74,7 @@ import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -211,8 +212,6 @@ public class CaptivePortalLoginActivityTest {
     private static CaptivePortalLoginMetrics sMockCaptivePortalLoginMetrics;
     private static final ArrayMap<String, Boolean> sFeatureFlags = new ArrayMap<>();
     private static boolean sIsMultiNetworkingSupportedByProvider;
-    private static Bundle sIntentExtrasForceWebview;
-    private static Network sNetworkForceWebview;
     private static String sMockCustomTabsPackageName;
     @Rule
     public final SetFeatureFlagsRule mSetFeatureFlagsRule =
@@ -376,14 +375,6 @@ public class CaptivePortalLoginActivityTest {
         @Override
         boolean getDeviceConfigPropertyBoolean(final String name, boolean defaultValue) {
             return defaultValue;
-        }
-
-        @Override
-        void startActivityFromCustomTabsMenuItem(@NonNull final Network network,
-                @NonNull final Bundle intentExtras) {
-            // Do not start a new captive portal activity.
-            sNetworkForceWebview = network;
-            sIntentExtrasForceWebview = intentExtras;
         }
     }
 
@@ -1554,8 +1545,9 @@ public class CaptivePortalLoginActivityTest {
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.waitForIdle();
         final BySelector moreButtonSelector = makeMoreButtonSelector();
+        assertEventuallyTrue("The Custom Tab more button was not found.", TEST_TIMEOUT_MS,
+                () -> device.findObject(moreButtonSelector) != null);
         final UiObject2 moreButton = device.findObject(moreButtonSelector);
-        assertTrue("The Custom Tab more button was not found.", moreButton != null);
 
         moreButton.click();
 
@@ -1604,6 +1596,8 @@ public class CaptivePortalLoginActivityTest {
         assumeTrue(isChromeInstalled());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_DO_NOT_USE_THIS_NETWORK);
+        waitForDestroyedState();
+        assertEquals(DESTROYED, mActivityScenario.getState());
         assertEquals(1, cp.mSetDelegateUidTimes);
         assertEquals(1, cp.mIgnoreTimes);
     }
@@ -1618,16 +1612,18 @@ public class CaptivePortalLoginActivityTest {
         assumeTrue(isChromeInstalled());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_THIS_NETWORK);
+        waitForDestroyedState();
+        assertEquals(DESTROYED, mActivityScenario.getState());
         assertEquals(1, cp.mSetDelegateUidTimes);
         assertEquals(1, cp.mUseTimes);
     }
 
-    private void verifyIntentExtrasForForceWebview() {
-        assertEquals(mNetwork, sIntentExtrasForceWebview.getParcelable(EXTRA_NETWORK));
-        assertEquals(TEST_URL, sIntentExtrasForceWebview.getString(EXTRA_CAPTIVE_PORTAL_URL));
+    private void verifyIntentExtrasForForceWebview(final Bundle intentExtras) {
+        assertEquals(mNetwork, intentExtras.getParcelable(EXTRA_NETWORK));
+        assertEquals(TEST_URL, intentExtras.getString(EXTRA_CAPTIVE_PORTAL_URL));
         assertEquals(TEST_USERAGENT,
-                sIntentExtrasForceWebview.getString(EXTRA_CAPTIVE_PORTAL_USER_AGENT));
-        assertEquals(true, sIntentExtrasForceWebview.getBoolean(EXTRA_USE_CLASSIC_VIEW));
+                intentExtras.getString(EXTRA_CAPTIVE_PORTAL_USER_AGENT));
+        assertEquals(true, intentExtras.getBoolean(EXTRA_USE_CLASSIC_VIEW));
     }
 
     @Test
@@ -1638,10 +1634,12 @@ public class CaptivePortalLoginActivityTest {
         // specific UI of chrome. For those platforms without chrome browser installed
         // such as aosp platforms, then skip this test.
         assumeTrue(isChromeInstalled());
+        doNothing().when(sConnectivityManager).startCaptivePortalApp(any(), any());
         runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_CLASSIC_VIEW);
-        getInstrumentation().waitForIdleSync();
-        assertEquals(mNetwork, sNetworkForceWebview);
-        verifyIntentExtrasForForceWebview();
+        final ArgumentCaptor<Bundle> bundleCaptor = ArgumentCaptor.forClass(Bundle.class);
+        verify(sConnectivityManager, timeout(TEST_TIMEOUT_MS)).startCaptivePortalApp(eq(mNetwork),
+                bundleCaptor.capture());
+        verifyIntentExtrasForForceWebview(bundleCaptor.getValue());
     }
 
     @Test
