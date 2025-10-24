@@ -29,12 +29,12 @@
     <test class="com.android.tradefed.testtype.AndroidJUnitTest" >
         <option name="package" value="com.android.captiveportallogin.tests" />
         <option name="runner" value="androidx.test.runner.AndroidJUnitRunner" />
-        <option name="device-listeners" value="android.device.collectors.ScreenshotOnFailureCollector" />
-        <option name="device-listeners" value="com.android.testutils.ConnectivityDiagnosticsCollector" />
+        <option name="device-listeners" value="com.android.captiveportallogin.android.device.collectors.ScreenshotOnFailureCollector" />
+        <option name="device-listeners" value="com.android.captiveportallogin.com.android.testutils.ConnectivityDiagnosticsCollector" />
     </test>
 
     <metrics_collector class="com.android.tradefed.device.metric.FilePullerLogCollector">
-        <option name="pull-pattern-keys" value="android.device.collectors.ScreenshotOnFailureCollector.*\.png"/>
-        <option name="pull-pattern-keys" value="com.android.testutils.ConnectivityDiagnosticsCollector.*"/>
+        <option name="pull-pattern-keys" value="com.android.captiveportallogin.android.device.collectors.ScreenshotOnFailureCollector.*\.png"/>
+        <option name="pull-pattern-keys" value="com.android.captiveportallogin.com.android.testutils.ConnectivityDiagnosticsCollector.*"/>
     </metrics_collector>
 </configuration>
