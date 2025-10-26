@@ -166,7 +166,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
@@ -213,6 +212,7 @@ public class CaptivePortalLoginActivityTest {
     private static final ArrayMap<String, Boolean> sFeatureFlags = new ArrayMap<>();
     private static boolean sIsMultiNetworkingSupportedByProvider;
     private static String sMockCustomTabsPackageName;
+    private static ConditionVariable sDestroyedCv;
     @Rule
     public final SetFeatureFlagsRule mSetFeatureFlagsRule =
             new SetFeatureFlagsRule((name, enabled) -> {
@@ -223,7 +223,6 @@ public class CaptivePortalLoginActivityTest {
     public final DevSdkIgnoreRule mIgnoreRule = new DevSdkIgnoreRule();
 
     public static class InstrumentedCaptivePortalLoginActivity extends CaptivePortalLoginActivity {
-        private final ConditionVariable mDestroyedCv = new ConditionVariable(false);
         private final CompletableFuture<Intent> mForegroundServiceStart = new CompletableFuture<>();
         // Workaround for https://github.com/android/android-test/issues/1119
         private final CompletableFuture<Intent> mOpenInBrowserIntent =
@@ -270,7 +269,7 @@ public class CaptivePortalLoginActivityTest {
         @Override
         public void onDestroy() {
             super.onDestroy();
-            mDestroyedCv.open();
+            sDestroyedCv.open();
         }
 
         @Override
@@ -525,6 +524,7 @@ public class CaptivePortalLoginActivityTest {
         sMockCustomTabsClient = mock(CustomTabsClient.class);
         sMockCaptivePortalLoginMetrics = mock(CaptivePortalLoginMetrics.class);
         sMockCustomTabsPackageName = null;
+        sDestroyedCv = new ConditionVariable(false);
 
         MockitoAnnotations.initMocks(this);
         // Use a real (but test) network for the application. The application will pass this
@@ -772,14 +772,9 @@ public class CaptivePortalLoginActivityTest {
         verifyNotDone();
     }
 
-    void waitForDestroyedState() throws Exception {
-        final long startTimeMs = System.currentTimeMillis();
-        long currentTimeMs = startTimeMs;
-        while (mActivityScenario.getState() != DESTROYED
-                && (currentTimeMs - startTimeMs) < TEST_TIMEOUT_MS) {
-            Thread.sleep(50);
-            currentTimeMs = System.currentTimeMillis();
-        }
+    void checkActivityEventuallyDestroyed() throws Exception {
+        assertTrue("The activity was not destroyed after " + TEST_TIMEOUT_MS + "ms",
+                sDestroyedCv.block(TEST_TIMEOUT_MS));
     }
 
     @Test @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
@@ -794,10 +789,7 @@ public class CaptivePortalLoginActivityTest {
         nc.setCapability(NET_CAPABILITY_VALIDATED, true);
         notifyValidatedChangedAndDismissed(nc);
 
-        // Workaround to deflake the test. The problem may be caused by a race with lock inside
-        // InstrumentationActivityInvoker.
-        // TODO: Remove it once https://github.com/android/android-test/issues/676 is fixed.
-        waitForDestroyedState();
+        checkActivityEventuallyDestroyed();
     }
 
     @Test @SdkSuppress(maxSdkVersion = Build.VERSION_CODES.Q)
@@ -914,23 +906,16 @@ public class CaptivePortalLoginActivityTest {
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.findObject(By.clazz(WebView.class.getName())).click();
 
-        // Wait for the second page to load by waiting for the webview to be able to go back.
-        final AtomicReference<WebView> webViewRef = new AtomicReference<>();
-        mActivityScenario.onActivity(activity -> webViewRef.set(
-                activity.findViewById(R.id.webview)));
-        final AtomicBoolean canGoBack = new AtomicBoolean(false);
+        // Wait for the second page to load by checking for its content.
         assertTrue("Timeout waiting for second page to load", isEventually(() -> {
-            getInstrumentation().runOnMainSync(() -> {
-                if (webViewRef.get() != null) {
-                    canGoBack.set(webViewRef.get().canGoBack());
-                }
-            });
-            return canGoBack.get();
+            try {
+                onWebView().withElement(findElement(Locator.ID, page2ContentId))
+                        .check(webMatches(getText(), containsString(page2ContentText)));
+                return true;
+            } catch (Throwable t) {
+                return false;
+            }
         }, TEST_TIMEOUT_MS));
-
-        // Check the second page is loaded.
-        onWebView().withElement(findElement(Locator.ID, page2ContentId))
-                .check(webMatches(getText(), containsString(page2ContentText)));
 
         // Now that a history entry for page2 exists, pressing back should navigate back.
         pressBack();
@@ -1451,19 +1436,15 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    // TODO: run on S+ once latest Chrome versions can be installed before test run.
-    @IgnoreUpTo(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
-    public void testCaptivePortalUsingCustomTabs_closeAppWhenTabHiddenButParentStillResumed()
-            throws Exception {
+    public void testCaptivePortalUsingCustomTabs_closeAppWhenClosingCustomTab() throws Exception {
         assumeTrue(isChromeInstalled());
         prepareRealCustomTabs();
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.waitForIdle();
         device.pressBack();
 
-        waitForDestroyedState();
-        assertEquals(DESTROYED, mActivityScenario.getState());
+        checkActivityEventuallyDestroyed();
     }
 
     // Only run this test on R+ and B-, because on B and above private DNS bypass is supported,
@@ -1596,8 +1577,7 @@ public class CaptivePortalLoginActivityTest {
         assumeTrue(isChromeInstalled());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_DO_NOT_USE_THIS_NETWORK);
-        waitForDestroyedState();
-        assertEquals(DESTROYED, mActivityScenario.getState());
+        checkActivityEventuallyDestroyed();
         assertEquals(1, cp.mSetDelegateUidTimes);
         assertEquals(1, cp.mIgnoreTimes);
     }
@@ -1612,8 +1592,7 @@ public class CaptivePortalLoginActivityTest {
         assumeTrue(isChromeInstalled());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_THIS_NETWORK);
-        waitForDestroyedState();
-        assertEquals(DESTROYED, mActivityScenario.getState());
+        checkActivityEventuallyDestroyed();
         assertEquals(1, cp.mSetDelegateUidTimes);
         assertEquals(1, cp.mUseTimes);
     }

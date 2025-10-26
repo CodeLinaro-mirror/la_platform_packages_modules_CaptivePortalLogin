@@ -78,7 +78,6 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.OutcomeReceiver;
-import android.os.RemoteException;
 import android.os.ServiceSpecificException;
 import android.os.SystemProperties;
 import android.provider.DeviceConfig;
@@ -129,7 +128,6 @@ import androidx.browser.customtabs.CustomTabsClient;
 import androidx.browser.customtabs.CustomTabsIntent;
 import androidx.browser.customtabs.CustomTabsServiceConnection;
 import androidx.browser.customtabs.CustomTabsSession;
-import androidx.browser.customtabs.EngagementSignalsCallback;
 import androidx.core.content.FileProvider;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
@@ -206,6 +204,7 @@ public class CaptivePortalLoginActivity extends Activity {
     private static final int DO_NOT_USE_THIS_NETWORK_PENDING_INTENT_REQUEST_CODE = 1001;
     private static final int USE_THIS_NETWORK_PENDING_INTENT_REQUEST_CODE = 1002;
     private static final int USE_CLASSIC_VIEW_PENDING_INTENT_REQUEST_CODE = 1003;
+    private static final int ACTIVITY_REQUEST_CUSTOM_TABS = 100_000;
 
     private URL mUrl;
     private String mUrlString;
@@ -262,8 +261,7 @@ public class CaptivePortalLoginActivity extends Activity {
     private final CaptivePortalLoginMetrics mCaptivePortalLoginMetrics =
             getCaptivePortalLoginMetrics();
 
-    private static final class CaptivePortalCustomTabsCallback extends CustomTabsCallback
-            implements EngagementSignalsCallback {
+    private static final class CaptivePortalCustomTabsCallback extends CustomTabsCallback {
         @NonNull private CaptivePortalLoginActivity mParent;
 
         CaptivePortalCustomTabsCallback(@NonNull final CaptivePortalLoginActivity parent) {
@@ -312,13 +310,6 @@ public class CaptivePortalLoginActivity extends Activity {
                 return;
             }
             mParent.runOnUiThread(() -> setExcludeFromRecents(false));
-        }
-
-        @Override
-        public void onSessionEnded(boolean didUserInteract, @NonNull Bundle extras) {
-            // Close the app if the user closed the browser activity (for example by using the back
-            // gesture on the first page).
-            mParent.finishAndRemoveTask();
         }
 
         private void setExcludeFromRecents(boolean exclude) {
@@ -414,20 +405,6 @@ public class CaptivePortalLoginActivity extends Activity {
                             96 /* dp */, mParent.getResources().getDisplayMetrics());
                     availableSpace = (windowSize.bottom - windowSize.top) - top;
                 }
-            } else {
-                try {
-                    session.setEngagementSignalsCallback(mParent.mPersistentState.mCallback,
-                            null /* extras */);
-                } catch (RemoteException e) {
-                    Log.e(TAG, "Custom tab service died");
-                } catch (UnsupportedOperationException e) {
-                    // This should not happen as there is no custom tab implementation that supports
-                    // setNetwork but not setEngagementSignalsCallback. If support for only the
-                    // former is added to some browser, fall back to webview.
-                    Log.wtf(TAG, "onSessionEnded callback support is required", e);
-                    mParent.runOnUiThread(() -> mParent.relaunchActivityWithWebview());
-                    return;
-                }
             }
 
             final int size = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
@@ -490,7 +467,12 @@ public class CaptivePortalLoginActivity extends Activity {
             // same experience as the custom tabs browser.
             final String emptyReferrer = "";
             customTabsIntent.intent.putExtra(Intent.EXTRA_REFERRER, Uri.parse(emptyReferrer));
-            customTabsIntent.launchUrl(mParent, Uri.parse(mParent.mUrl.toString()));
+            // Replicate customTabsIntent.launchUrl, which calls intent.setData(url) and
+            // ContextCompat.startActivity(context, intent, startAnimationBundle), but using
+            // startActivityForResult to get notified when the activity is closed.
+            customTabsIntent.intent.setData(Uri.parse(mParent.mUrl.toString()));
+            mParent.startActivityForResult(customTabsIntent.intent, ACTIVITY_REQUEST_CUSTOM_TABS,
+                    customTabsIntent.startAnimationBundle);
         }
 
         @Override
@@ -1479,6 +1461,12 @@ public class CaptivePortalLoginActivity extends Activity {
 
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == ACTIVITY_REQUEST_CUSTOM_TABS) {
+            // Close the app if the user closed the browser activity (for example by using the back
+            // gesture on the first page).
+            finishAndRemoveTask();
+            return;
+        }
         if (resultCode != RESULT_OK || data == null) return;
 
         // Start download after receiving a created file to download to
