@@ -1753,4 +1753,18 @@ public class CaptivePortalLoginActivityTest {
                 CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_SUCCESS,
                 CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_PRIVATE_DNS_ENABLED_V_AND_BELOW);
     }
+
+    @Test
+    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
+    public void testSecondaryToolbarView() throws Exception {
+        assumeTrue(isChromeInstalled());
+        prepareRealCustomTabs();
+        final UiDevice device = UiDevice.getInstance(getInstrumentation());
+        final BySelector selector = By.clazz("android.widget.TextView")
+                .text(getInstrumentation().getContext().getString(R.string.action_bar_title,
+                        TEST_NC_SSID));
+        assertEventuallyTrue("The remote view was not found.", TEST_TIMEOUT_MS,
+                () -> device.findObject(selector) != null);
+    }
+
 }
