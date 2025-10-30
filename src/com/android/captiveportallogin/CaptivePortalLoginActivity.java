@@ -112,6 +112,7 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.RemoteViews;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.window.OnBackInvokedDispatcher;
@@ -458,6 +459,11 @@ public class CaptivePortalLoginActivity extends Activity {
             }
             final CustomTabsIntent customTabsIntent = builder.build();
             if (mParent.mFullCustomTabEnabled) {
+                final String signInText = mParent.getHeaderTitle();
+                final RemoteViews remoteViews = new RemoteViews(mParent.getPackageName(),
+                        R.layout.custom_tab_bottom_toolbar);
+                remoteViews.setTextViewText(R.id.bottom_toolbar_text, signInText);
+                builder.setSecondaryToolbarViews(remoteViews, null, null);
                 customTabsIntent.intent.putExtra(CUSTOM_TAB_EXTRA_KEEPALIVE_SERVICE,
                         new Intent(mParent.getApplicationContext(),
                                 CustomTabsKeepAliveService.class));
