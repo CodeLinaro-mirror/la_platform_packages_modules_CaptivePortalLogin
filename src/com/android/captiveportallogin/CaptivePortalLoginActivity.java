@@ -713,7 +713,10 @@ public class CaptivePortalLoginActivity extends Activity {
     }
 
     @VisibleForTesting
-    boolean isMultiNetworkingSupportedByProvider(@NonNull final String defaultPackageName) {
+    boolean isMultiNetworkingSupportedByProvider(final String defaultPackageName) {
+        if (defaultPackageName == null) {
+            return false;
+        }
         return CustomTabsClient.isSetNetworkSupported(getApplicationContext(), defaultPackageName);
     }
 
@@ -853,8 +856,7 @@ public class CaptivePortalLoginActivity extends Activity {
         if (null == defaultPackage) {
             mCaptivePortalLoginMetrics.setReason(
                     CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_NOT_SUPPORT_CCT);
-        }
-        if (!isMultiNetworkingSupportedByProvider(defaultPackage)) {
+        } else if (!isMultiNetworkingSupportedByProvider(defaultPackage)) {
             mCaptivePortalLoginMetrics.setReason(
                     CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_NOT_SUPPORT_MULTI_NETWORK);
         }
