@@ -350,6 +350,11 @@ public class CaptivePortalLoginActivityTest {
         }
 
         @Override
+        boolean isCustomTabsEnabledThroughMainlineFlag() {
+            return false;
+        }
+
+        @Override
         boolean getDeviceConfigPropertyBoolean(final String name, boolean defaultValue) {
             return defaultValue;
         }
