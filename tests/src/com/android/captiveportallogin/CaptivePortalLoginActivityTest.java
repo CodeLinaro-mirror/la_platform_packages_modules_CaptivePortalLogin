@@ -162,6 +162,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -472,7 +473,7 @@ public class CaptivePortalLoginActivityTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        if (!isChromeInstalled()) {
+        if (!isChromeDefaultBrowser()) {
             return;
         }
         // TODO: to use --disable-fre and stop using the engagement signals.
@@ -1446,7 +1447,7 @@ public class CaptivePortalLoginActivityTest {
     @Test
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCaptivePortalUsingCustomTabs_closeAppWhenClosingCustomTab() throws Exception {
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         prepareRealCustomTabs();
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.waitForIdle();
@@ -1573,14 +1574,10 @@ public class CaptivePortalLoginActivityTest {
         return cp;
     }
 
-    private static boolean isChromeInstalled() {
-        try {
-            final Context context = getInstrumentation().getContext();
-            context.getPackageManager().getPackageInfo("com.android.chrome", 0);
-            return true;
-        } catch (NameNotFoundException e) {
-            return false;
-        }
+    private static boolean isChromeDefaultBrowser() {
+        final String defaultBrowser = CustomTabsClient.getPackageName(
+                getApplicationContext(), null /* packages */);
+        return Objects.equals(defaultBrowser, "com.android.chrome");
     }
 
     @Test
@@ -1590,7 +1587,7 @@ public class CaptivePortalLoginActivityTest {
         // This test requires to launch a custom tab provider Chrome and depends on the
         // specific UI of chrome. For those platforms without chrome browser installed
         // such as aosp platforms, then skip this test.
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_DO_NOT_USE_THIS_NETWORK);
         checkActivityEventuallyDestroyed();
@@ -1605,7 +1602,7 @@ public class CaptivePortalLoginActivityTest {
         // This test requires to launch a custom tab provider Chrome and depends on the
         // specific UI of chrome. For those platforms without chrome browser installed
         // such as aosp platforms, then skip this test.
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_THIS_NETWORK);
         checkActivityEventuallyDestroyed();
@@ -1628,7 +1625,7 @@ public class CaptivePortalLoginActivityTest {
         // This test requires to launch a custom tab provider Chrome and depends on the
         // specific UI of chrome. For those platforms without chrome browser installed
         // such as aosp platforms, then skip this test.
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         doNothing().when(sConnectivityManager).startCaptivePortalApp(any(), any());
         runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_CLASSIC_VIEW);
         final ArgumentCaptor<Bundle> bundleCaptor = ArgumentCaptor.forClass(Bundle.class);
@@ -1773,7 +1770,7 @@ public class CaptivePortalLoginActivityTest {
     @Test
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testSecondaryToolbarView() throws Exception {
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         prepareRealCustomTabs();
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         final BySelector selector = By.clazz("android.widget.TextView")
