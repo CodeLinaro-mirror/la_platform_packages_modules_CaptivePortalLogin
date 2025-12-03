@@ -20,6 +20,7 @@ import static android.net.ConnectivityManager.EXTRA_CAPTIVE_PORTAL_PROBE_SPEC;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED;
 
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.CAPTIVE_PORTAL_CUSTOM_TABS;
+import static com.android.captiveportallogin.CaptivePortalLoginFlags.CAPTIVE_PORTAL_CUSTOM_TABS_WITH_MULTINETWORK_API;
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.USE_ANY_CUSTOM_TAB_PROVIDER;
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.USE_FULL_CUSTOM_TAB;
 import static com.android.captiveportallogin.DownloadService.isDirectlyOpenType;
@@ -227,6 +228,7 @@ public class CaptivePortalLoginActivity extends Activity {
     // should be fine.
     private boolean mCaptivePortalCustomTabsEnabled;
     private boolean mFullCustomTabEnabled;
+    private boolean mUseCustomTabWithMultiNetworkApi = true;
     @ChecksSdkIntAtLeast(api = Build.VERSION_CODES.S)
     private boolean mUsingCustomTabs;
     // Ensures that done() happens once exactly, handling concurrent callers with atomic operations.
@@ -419,7 +421,6 @@ public class CaptivePortalLoginActivity extends Activity {
             // to call {@Link Intent#setPackage} to explicitly specify the package name
             // again.
             final CustomTabsIntent.Builder builder = new CustomTabsIntent.Builder(session)
-                    .setNetwork(mParent.mNetwork)
                     .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
                     // Do not show a title to avoid pages pretend they are part of the Android
                     // system.
@@ -447,6 +448,10 @@ public class CaptivePortalLoginActivity extends Activity {
                     // close button icon once all custom tabs provider support this API.
                     .setCloseButtonEnabled(false);
 
+            if (mParent.mUseCustomTabWithMultiNetworkApi) {
+                builder.setNetwork(mParent.mNetwork);
+            }
+
             if (availableSpace > 0) {
                 builder.setInitialActivityHeightPx(availableSpace,
                         CustomTabsIntent.ACTIVITY_HEIGHT_FIXED);
@@ -473,6 +478,9 @@ public class CaptivePortalLoginActivity extends Activity {
             // same experience as the custom tabs browser.
             final String emptyReferrer = "";
             customTabsIntent.intent.putExtra(Intent.EXTRA_REFERRER, Uri.parse(emptyReferrer));
+            // Disable "Open in Browser" option in the toolbar menu.
+            customTabsIntent.intent.putExtra(CustomTabsIntent.EXTRA_OPEN_IN_BROWSER_STATE,
+                    CustomTabsIntent.OPEN_IN_BROWSER_STATE_OFF);
             // Replicate customTabsIntent.launchUrl, which calls intent.setData(url) and
             // ContextCompat.startActivity(context, intent, startAnimationBundle), but using
             // startActivityForResult to get notified when the activity is closed.
@@ -1095,6 +1103,8 @@ public class CaptivePortalLoginActivity extends Activity {
             }
             initializeWebView();
         } else {
+            mUseCustomTabWithMultiNetworkApi = isFeatureNotChickenedOut(
+                    CAPTIVE_PORTAL_CUSTOM_TABS_WITH_MULTINETWORK_API);
             if (mFullCustomTabEnabled) {
                 setTheme(androidx.appcompat.R.style.Theme_AppCompat_DayNight_Dialog_Alert);
             }

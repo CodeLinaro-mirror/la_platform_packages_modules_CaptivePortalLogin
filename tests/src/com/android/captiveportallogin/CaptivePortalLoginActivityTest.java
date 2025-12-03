@@ -1385,6 +1385,8 @@ public class CaptivePortalLoginActivityTest {
         intended(allOf(
                 hasExtra(Intent.EXTRA_REFERRER, Uri.parse("")),
                 hasExtra(CustomTabsIntent.EXTRA_NETWORK, mNetwork),
+                hasExtra(CustomTabsIntent.EXTRA_OPEN_IN_BROWSER_STATE,
+                        CustomTabsIntent.OPEN_IN_BROWSER_STATE_OFF),
                 hasData(Uri.parse(TEST_URL))));
 
         // Send navigation start event, verify if the network will be reevaluated.
