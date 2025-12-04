@@ -30,6 +30,7 @@ import static android.view.accessibility.AccessibilityEvent.TYPE_NOTIFICATION_ST
 import static androidx.browser.customtabs.CustomTabsCallback.NAVIGATION_STARTED;
 import static androidx.browser.customtabs.CustomTabsService.ACTION_CUSTOM_TABS_CONNECTION;
 import static androidx.lifecycle.Lifecycle.State.DESTROYED;
+import static androidx.test.core.app.ApplicationProvider.getApplicationContext;
 import static androidx.test.espresso.Espresso.pressBack;
 import static androidx.test.espresso.intent.Intents.intended;
 import static androidx.test.espresso.intent.Intents.intending;
@@ -73,6 +74,7 @@ import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -120,15 +122,16 @@ import androidx.browser.customtabs.CustomTabsClient;
 import androidx.browser.customtabs.CustomTabsIntent;
 import androidx.browser.customtabs.CustomTabsServiceConnection;
 import androidx.browser.customtabs.CustomTabsSession;
-import androidx.browser.customtabs.EngagementSignalsCallback;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.espresso.intent.Intents;
 import androidx.test.espresso.web.webdriver.Locator;
 import androidx.test.filters.SdkSuppress;
 import androidx.test.filters.SmallTest;
 import androidx.test.uiautomator.By;
+import androidx.test.uiautomator.BySelector;
 import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject;
+import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.UiSelector;
 
 import com.android.net.module.util.CollectionUtils;
@@ -142,6 +145,7 @@ import com.android.testutils.com.android.testutils.SetFeatureFlagsRule.FeatureFl
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -156,12 +160,12 @@ import java.net.ServerSocket;
 import java.net.URI;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
@@ -207,8 +211,8 @@ public class CaptivePortalLoginActivityTest {
     private static CaptivePortalLoginMetrics sMockCaptivePortalLoginMetrics;
     private static final ArrayMap<String, Boolean> sFeatureFlags = new ArrayMap<>();
     private static boolean sIsMultiNetworkingSupportedByProvider;
-    private static Bundle sIntentExtrasForceWebview;
-    private static Network sNetworkForceWebview;
+    private static String sMockCustomTabsPackageName;
+    private static ConditionVariable sDestroyedCv;
     @Rule
     public final SetFeatureFlagsRule mSetFeatureFlagsRule =
             new SetFeatureFlagsRule((name, enabled) -> {
@@ -219,7 +223,6 @@ public class CaptivePortalLoginActivityTest {
     public final DevSdkIgnoreRule mIgnoreRule = new DevSdkIgnoreRule();
 
     public static class InstrumentedCaptivePortalLoginActivity extends CaptivePortalLoginActivity {
-        private final ConditionVariable mDestroyedCv = new ConditionVariable(false);
         private final CompletableFuture<Intent> mForegroundServiceStart = new CompletableFuture<>();
         // Workaround for https://github.com/android/android-test/issues/1119
         private final CompletableFuture<Intent> mOpenInBrowserIntent =
@@ -266,7 +269,7 @@ public class CaptivePortalLoginActivityTest {
         @Override
         public void onDestroy() {
             super.onDestroy();
-            mDestroyedCv.open();
+            sDestroyedCv.open();
         }
 
         @Override
@@ -278,15 +281,19 @@ public class CaptivePortalLoginActivityTest {
                         mDownloadServiceBound.complete(conn));
                 getMainThreadHandler().post(() -> conn.onServiceConnected(
                         getInstrumentation().getComponentName(), sDownloadServiceBinder));
-            } else if (service.getAction().equals(ACTION_CUSTOM_TABS_CONNECTION)) {
+                return true;
+            } else if (service.getAction().equals(ACTION_CUSTOM_TABS_CONNECTION)
+                    && TEST_CUSTOM_TABS_PACKAGE_NAME.equals(service.getPackage())) {
                 assertTrue("CustomTabs foreground service was bound multiple times during the test",
                         mCustomTabsServiceBound.complete((CustomTabsServiceConnection) conn));
                 getMainThreadHandler().post(() -> {
                     ((CustomTabsServiceConnection) conn).onCustomTabsServiceConnected(
                             getInstrumentation().getComponentName(), sMockCustomTabsClient);
                 });
+                return true;
+            } else {
+                return super.bindService(service, conn, flags);
             }
-            return true;
         }
 
         @Override
@@ -323,17 +330,27 @@ public class CaptivePortalLoginActivityTest {
 
         @Override
         String getDefaultCustomTabsProviderPackage() {
-            return TEST_CUSTOM_TABS_PACKAGE_NAME;
+            if (sMockCustomTabsPackageName != null) {
+                return sMockCustomTabsPackageName;
+            }
+            return super.getDefaultCustomTabsProviderPackage();
         }
 
         @Override
         int getPackageUid(@NonNull final String customTabsProviderPackageName)
                 throws NameNotFoundException {
-            return TEST_CUSTOM_TABS_PROVIDER_UID;
+            if (sMockCustomTabsPackageName != null) {
+                return TEST_CUSTOM_TABS_PROVIDER_UID;
+            }
+            return super.getPackageUid(customTabsProviderPackageName);
         }
 
         @Override
         boolean isMultiNetworkingSupportedByProvider(final String defaultPackageName) {
+            // We should always mock this method, otherwise the CCT will not be launched if the
+            // chrome version is too old on the DUT and doesn't support multi-networking.
+            // TODO: only mock if sMockCustomTabsPackageName is set when the browser is updated
+            //  before running tests.
             return sIsMultiNetworkingSupportedByProvider;
         }
 
@@ -357,14 +374,6 @@ public class CaptivePortalLoginActivityTest {
         @Override
         boolean getDeviceConfigPropertyBoolean(final String name, boolean defaultValue) {
             return defaultValue;
-        }
-
-        @Override
-        void startActivityFromCustomTabsMenuItem(@NonNull final Network network,
-                @NonNull final Bundle intentExtras) {
-            // Do not start a new captive portal activity.
-            sNetworkForceWebview = network;
-            sIntentExtrasForceWebview = intentExtras;
         }
     }
 
@@ -440,6 +449,72 @@ public class CaptivePortalLoginActivityTest {
         };
     }
 
+    private static BySelector makeMoreButtonSelector() {
+        return By.res("com.android.chrome:id/menu_button");
+    }
+
+    private static boolean tryClickElement(UiDevice device, BySelector selector) {
+        final UiObject2 object = device.findObject(selector);
+        if (object == null || !object.isClickable()) {
+            return false;
+        }
+        object.click();
+        device.waitForIdle();
+        return true;
+    }
+
+    @BeforeClass
+    public static void setUpClass() throws Exception {
+        if (!isChromeInstalled()) {
+            return;
+        }
+        // TODO: to use --disable-fre and stop using the engagement signals.
+        ActivityScenario.launch(RequestDismissKeyguardActivity.class);
+        final Context context = getInstrumentation().getContext();
+        final String defaultBrowser = CustomTabsClient.getPackageName(
+                getApplicationContext(), null /* packages */);
+
+        // If the default browser is not set there is nothing to do.
+        if (defaultBrowser == null) return;
+
+        final Intent launchIntent = context.getPackageManager().getLaunchIntentForPackage(
+                defaultBrowser);
+        // If the default browser is not launchable, there is nothing to do.
+        if (launchIntent == null) return;
+
+        launchIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(launchIntent);
+
+        final UiDevice device = UiDevice.getInstance(getInstrumentation());
+        final BySelector moreButton = makeMoreButtonSelector();
+        final List<BySelector> trySelectors = List.of(
+                // "Accept & continue" button on the welcome screen
+                By.res("com.android.chrome:id/terms_accept"),
+                // "No thanks" button on the sign-in screen
+                By.res("com.android.chrome:id/negative_button"),
+                // Sign in screen
+                By.res("com.android.chrome:id/signin_fre_dismiss_button"),
+                // Privacy sandbox screen
+                By.res("com.android.chrome:id/ack_button").hasAncestor(
+                        By.res("com.android.chrome:id/privacy_sandbox_notice_row_view"))
+        );
+        // Try at least (number of screens) times to dismiss setup screens, by trying to click
+        // each of the dismiss buttons
+        for (int setupScreenIndex = 0; setupScreenIndex < trySelectors.size(); setupScreenIndex++) {
+            device.waitForIdle();
+            if (device.findObject(moreButton) != null) {
+                break;
+            }
+            for (BySelector selector : trySelectors) {
+                if (tryClickElement(device, selector)) {
+                    break;
+                }
+            }
+        }
+        // Close the default browser by pressing home button
+        device.pressHome();
+    }
+
     @Before
     public void setUp() throws Exception {
         final Context context = getInstrumentation().getContext();
@@ -448,6 +523,8 @@ public class CaptivePortalLoginActivityTest {
         sDownloadServiceBinder = mock(DownloadService.DownloadServiceBinder.class);
         sMockCustomTabsClient = mock(CustomTabsClient.class);
         sMockCaptivePortalLoginMetrics = mock(CaptivePortalLoginMetrics.class);
+        sMockCustomTabsPackageName = null;
+        sDestroyedCv = new ConditionVariable(false);
 
         MockitoAnnotations.initMocks(this);
         // Use a real (but test) network for the application. The application will pass this
@@ -467,6 +544,9 @@ public class CaptivePortalLoginActivityTest {
                 TEST_CUSTOM_TABS_PACKAGE_NAME, TEST_CUSTOM_TABS_CLASS))
         ).when(sMockCustomTabsClient).newSession(any());
         configNonVpnNetwork();
+        doReturn(CustomTabsSession.createMockSessionForTesting(new ComponentName(
+                TEST_CUSTOM_TABS_PACKAGE_NAME, TEST_CUSTOM_TABS_CLASS))
+        ).when(sMockCustomTabsClient).newSession(any());
         Intents.init();
     }
 
@@ -692,14 +772,9 @@ public class CaptivePortalLoginActivityTest {
         verifyNotDone();
     }
 
-    void waitForDestroyedState() throws Exception {
-        final long startTimeMs = System.currentTimeMillis();
-        long currentTimeMs = startTimeMs;
-        while (mActivityScenario.getState() != DESTROYED
-                && (currentTimeMs - startTimeMs) < TEST_TIMEOUT_MS) {
-            Thread.sleep(50);
-            currentTimeMs = System.currentTimeMillis();
-        }
+    void checkActivityEventuallyDestroyed() throws Exception {
+        assertTrue("The activity was not destroyed after " + TEST_TIMEOUT_MS + "ms",
+                sDestroyedCv.block(TEST_TIMEOUT_MS));
     }
 
     @Test @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
@@ -714,10 +789,7 @@ public class CaptivePortalLoginActivityTest {
         nc.setCapability(NET_CAPABILITY_VALIDATED, true);
         notifyValidatedChangedAndDismissed(nc);
 
-        // Workaround to deflake the test. The problem may be caused by a race with lock inside
-        // InstrumentationActivityInvoker.
-        // TODO: Remove it once https://github.com/android/android-test/issues/676 is fixed.
-        waitForDestroyedState();
+        checkActivityEventuallyDestroyed();
     }
 
     @Test @SdkSuppress(maxSdkVersion = Build.VERSION_CODES.Q)
@@ -834,23 +906,16 @@ public class CaptivePortalLoginActivityTest {
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.findObject(By.clazz(WebView.class.getName())).click();
 
-        // Wait for the second page to load by waiting for the webview to be able to go back.
-        final AtomicReference<WebView> webViewRef = new AtomicReference<>();
-        mActivityScenario.onActivity(activity -> webViewRef.set(
-                activity.findViewById(R.id.webview)));
-        final AtomicBoolean canGoBack = new AtomicBoolean(false);
+        // Wait for the second page to load by checking for its content.
         assertTrue("Timeout waiting for second page to load", isEventually(() -> {
-            getInstrumentation().runOnMainSync(() -> {
-                if (webViewRef.get() != null) {
-                    canGoBack.set(webViewRef.get().canGoBack());
-                }
-            });
-            return canGoBack.get();
+            try {
+                onWebView().withElement(findElement(Locator.ID, page2ContentId))
+                        .check(webMatches(getText(), containsString(page2ContentText)));
+                return true;
+            } catch (Throwable t) {
+                return false;
+            }
         }, TEST_TIMEOUT_MS));
-
-        // Check the second page is loaded.
-        onWebView().withElement(findElement(Locator.ID, page2ContentId))
-                .check(webMatches(getText(), containsString(page2ContentText)));
 
         // Now that a history entry for page2 exists, pressing back should navigate back.
         pressBack();
@@ -1258,15 +1323,13 @@ public class CaptivePortalLoginActivityTest {
         return linkProperties;
     }
 
-    private MockCaptivePortal prepareCaptivePortalUsingCustomTabs(
-            boolean isDelegateUidSetSuccessfully, final LinkProperties linkProperties)
-            throws Exception {
+    private MockCaptivePortal prepareMockCustomTabs(
+            boolean isDelegateUidSetSuccessfully, final LinkProperties linkProperties) {
         ActivityScenario.launch(RequestDismissKeyguardActivity.class);
         sIsMultiNetworkingSupportedByProvider = true;
         doReturn(linkProperties).when(sConnectivityManager).getLinkProperties(mNetwork);
 
-        intending(hasPackage(TEST_CUSTOM_TABS_PACKAGE_NAME))
-                .respondWith(new ActivityResult(RESULT_OK, null));
+        mockCustomTabsPackage();
         initActivity(TEST_URL);
 
         final MockCaptivePortal cp = getCaptivePortal();
@@ -1279,10 +1342,31 @@ public class CaptivePortalLoginActivityTest {
         return cp;
     }
 
+    private MockCaptivePortal prepareRealCustomTabs() {
+        ActivityScenario.launch(RequestDismissKeyguardActivity.class);
+        sIsMultiNetworkingSupportedByProvider = true;
+        initActivity(TEST_URL);
+        final MockCaptivePortal cp = getCaptivePortal();
+        mActivityScenario.onActivity(a -> cp.mDelegateUidReceiver.onResult(null));
+        final UiDevice device = UiDevice.getInstance(getInstrumentation());
+        device.waitForIdle();
+        // To ensure focus is on the web content and not an initial UI element in the
+        // custom tab (like a 'minimize' button), simulate a click in the center of the
+        // screen. This mimics a user touching the web page.
+        // If the focus is not on the web content, then pressing the back button will just bring
+        // the focus back to the web content. This will disrupt the test flow that needs to test
+        // the back button behavior.
+        final int screenWidth = device.getDisplayWidth();
+        final int screenHeight = device.getDisplayHeight();
+        device.click(screenWidth / 2, screenHeight / 2);
+        device.waitForIdle();
+        return cp;
+    }
+
     private void runCaptivePortalUsingCustomTabsTest(boolean isDelegateUidSetSuccessfully,
             final LinkProperties linkProperties) throws Exception {
         final MockCaptivePortal cp =
-                prepareCaptivePortalUsingCustomTabs(isDelegateUidSetSuccessfully, linkProperties);
+                prepareMockCustomTabs(isDelegateUidSetSuccessfully, linkProperties);
 
         final ArgumentCaptor<CustomTabsCallback> captor =
                 ArgumentCaptor.forClass(CustomTabsCallback.class);
@@ -1352,24 +1436,15 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
-    public void testCaptivePortalUsingCustomTabs_closeAppWhenTabHiddenButParentStillResumed()
-            throws Exception {
-        final LinkProperties lp = new LinkProperties();
-        prepareCaptivePortalUsingCustomTabs(true /* isDelegateUidSetSuccessfully */, lp);
+    public void testCaptivePortalUsingCustomTabs_closeAppWhenClosingCustomTab() throws Exception {
+        assumeTrue(isChromeInstalled());
+        prepareRealCustomTabs();
+        final UiDevice device = UiDevice.getInstance(getInstrumentation());
+        device.waitForIdle();
+        device.pressBack();
 
-        final ArgumentCaptor<CustomTabsCallback> captor =
-                ArgumentCaptor.forClass(CustomTabsCallback.class);
-        verify(sMockCustomTabsClient, timeout(TEST_TIMEOUT_MS)).newSession(captor.capture());
-        final CustomTabsCallback callback = captor.getValue();
-        assertNotNull(callback);
-
-        ((EngagementSignalsCallback) callback).onSessionEnded(
-                true /* didUserInteract */, null /* extras */);
-
-        waitForDestroyedState();
-        assertEquals(DESTROYED, mActivityScenario.getState());
+        checkActivityEventuallyDestroyed();
     }
 
     // Only run this test on R+ and B-, because on B and above private DNS bypass is supported,
@@ -1403,9 +1478,14 @@ public class CaptivePortalLoginActivityTest {
                 assertNotNull(activity.findViewById(R.id.webview)));
     }
 
-    private void verifyUsingWebViewRatherThanCustomTabs() {
+    private void mockCustomTabsPackage() {
+        sMockCustomTabsPackageName = TEST_CUSTOM_TABS_PACKAGE_NAME;
         intending(hasPackage(TEST_CUSTOM_TABS_PACKAGE_NAME))
                 .respondWith(new ActivityResult(RESULT_OK, null));
+    }
+
+    private void verifyUsingWebViewRatherThanCustomTabs() {
+        mockCustomTabsPackage();
         initActivity(TEST_URL);
         verifyWebViewInitialization();
     }
@@ -1444,12 +1524,12 @@ public class CaptivePortalLoginActivityTest {
 
     private void findMoreButtonAndClickTheMenuItem(final int menuItemIndex) throws Exception {
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
-        final UiSelector moreButtonSelector =
-                new UiSelector().descriptionContains("Customize and control");
-        final UiObject moreButton = device.findObject(moreButtonSelector);
-        // TODO: investigate why the more button is not found on certain device. see b/428907299.
-        assumeTrue("The Custom Tab more button was not found.",
-                moreButton.waitForExists(TEST_TIMEOUT_MS));
+        device.waitForIdle();
+        final BySelector moreButtonSelector = makeMoreButtonSelector();
+        assertEventuallyTrue("The Custom Tab more button was not found.", TEST_TIMEOUT_MS,
+                () -> device.findObject(moreButtonSelector) != null);
+        final UiObject2 moreButton = device.findObject(moreButtonSelector);
+
         moreButton.click();
 
         device.waitForIdle();
@@ -1461,7 +1541,7 @@ public class CaptivePortalLoginActivityTest {
         final UiSelector menuItemSelector =
                 new UiSelector().className("android.widget.TextView").instance(menuItemIndex);
         final UiObject menuItem = device.findObject(menuItemSelector);
-        assumeTrue("The expected menu item was not found.",
+        assertTrue("The expected menu item was not found.",
                 menuItem.waitForExists(TEST_TIMEOUT_MS));
         menuItem.click();
 
@@ -1472,8 +1552,7 @@ public class CaptivePortalLoginActivityTest {
         // Turn on the screen and dismiss the keyguard, allow UI automation to select the button.
         ActivityScenario.launch(RequestDismissKeyguardActivity.class);
 
-        final MockCaptivePortal cp = prepareCaptivePortalUsingCustomTabs(
-                true /* isDelegateUidSetSuccessfully */, new LinkProperties());
+        final MockCaptivePortal cp = prepareRealCustomTabs();
         findMoreButtonAndClickTheMenuItem(menuItemIndex);
         return cp;
     }
@@ -1498,6 +1577,7 @@ public class CaptivePortalLoginActivityTest {
         assumeTrue(isChromeInstalled());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_DO_NOT_USE_THIS_NETWORK);
+        checkActivityEventuallyDestroyed();
         assertEquals(1, cp.mSetDelegateUidTimes);
         assertEquals(1, cp.mIgnoreTimes);
     }
@@ -1512,16 +1592,17 @@ public class CaptivePortalLoginActivityTest {
         assumeTrue(isChromeInstalled());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_THIS_NETWORK);
+        checkActivityEventuallyDestroyed();
         assertEquals(1, cp.mSetDelegateUidTimes);
         assertEquals(1, cp.mUseTimes);
     }
 
-    private void verifyIntentExtrasForForceWebview() {
-        assertEquals(mNetwork, sIntentExtrasForceWebview.getParcelable(EXTRA_NETWORK));
-        assertEquals(TEST_URL, sIntentExtrasForceWebview.getString(EXTRA_CAPTIVE_PORTAL_URL));
+    private void verifyIntentExtrasForForceWebview(final Bundle intentExtras) {
+        assertEquals(mNetwork, intentExtras.getParcelable(EXTRA_NETWORK));
+        assertEquals(TEST_URL, intentExtras.getString(EXTRA_CAPTIVE_PORTAL_URL));
         assertEquals(TEST_USERAGENT,
-                sIntentExtrasForceWebview.getString(EXTRA_CAPTIVE_PORTAL_USER_AGENT));
-        assertEquals(true, sIntentExtrasForceWebview.getBoolean(EXTRA_USE_CLASSIC_VIEW));
+                intentExtras.getString(EXTRA_CAPTIVE_PORTAL_USER_AGENT));
+        assertEquals(true, intentExtras.getBoolean(EXTRA_USE_CLASSIC_VIEW));
     }
 
     @Test
@@ -1532,10 +1613,12 @@ public class CaptivePortalLoginActivityTest {
         // specific UI of chrome. For those platforms without chrome browser installed
         // such as aosp platforms, then skip this test.
         assumeTrue(isChromeInstalled());
+        doNothing().when(sConnectivityManager).startCaptivePortalApp(any(), any());
         runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_CLASSIC_VIEW);
-        getInstrumentation().waitForIdleSync();
-        assertEquals(mNetwork, sNetworkForceWebview);
-        verifyIntentExtrasForForceWebview();
+        final ArgumentCaptor<Bundle> bundleCaptor = ArgumentCaptor.forClass(Bundle.class);
+        verify(sConnectivityManager, timeout(TEST_TIMEOUT_MS)).startCaptivePortalApp(eq(mNetwork),
+                bundleCaptor.capture());
+        verifyIntentExtrasForForceWebview(bundleCaptor.getValue());
     }
 
     @Test
