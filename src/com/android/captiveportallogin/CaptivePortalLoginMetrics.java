@@ -17,6 +17,8 @@
 package com.android.captiveportallogin;
 
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED;
+import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__APP_EVENT__CAPTIVE_PORTAL_LOGIN_APP_EVENT_DONE;
+import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__APP_EVENT__CAPTIVE_PORTAL_LOGIN_APP_EVENT_STARTED;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_SUCCESS;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_UNKNOWN;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_UNWANTED;
@@ -49,6 +51,7 @@ public class CaptivePortalLoginMetrics {
     private int mUid;
     private int mCaptivePortalResult;
     private int mCaptivePortalUsingWebviewReason;
+    private long mDurationMs;
 
     public CaptivePortalLoginMetrics() {
         mUid = Process.INVALID_UID;
@@ -116,12 +119,33 @@ public class CaptivePortalLoginMetrics {
     }
 
     /**
+     * Set the duration in milliseconds taken to complete the captive portal login.
+     */
+    public void setDurationMs(final long durationMs) {
+        mDurationMs = durationMs;
+    }
+
+    /**
      * Write the CaptivePortalLoginReported proto into statsd.
      */
     public void statsWrite() {
         CaptivePortalLoginStatsLog.write(CAPTIVE_PORTAL_LOGIN_REPORTED,
                 mUid,
                 mCaptivePortalResult,
-                mCaptivePortalUsingWebviewReason);
+                mCaptivePortalUsingWebviewReason,
+                CAPTIVE_PORTAL_LOGIN_REPORTED__APP_EVENT__CAPTIVE_PORTAL_LOGIN_APP_EVENT_DONE,
+                mDurationMs);
+    }
+
+    /**
+     * Log the app start event into statsd.
+     */
+    public void logAppStart() {
+        CaptivePortalLoginStatsLog.write(CAPTIVE_PORTAL_LOGIN_REPORTED,
+                android.os.Process.INVALID_UID,
+                CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_UNKNOWN,
+                CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_UNKNOWN,
+                CAPTIVE_PORTAL_LOGIN_REPORTED__APP_EVENT__CAPTIVE_PORTAL_LOGIN_APP_EVENT_STARTED,
+                0 /* durationMs */);
     }
 }

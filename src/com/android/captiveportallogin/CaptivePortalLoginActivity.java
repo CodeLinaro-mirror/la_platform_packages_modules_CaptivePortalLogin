@@ -80,6 +80,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.OutcomeReceiver;
 import android.os.ServiceSpecificException;
+import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.provider.DocumentsContract;
@@ -252,10 +253,17 @@ public class CaptivePortalLoginActivity extends Activity {
         CaptivePortalCustomTabsServiceConnection mServiceConnection = null;
         CaptivePortalCustomTabsCallback mCallback = null;
         IBinder mInstanceToken = null;
-        public void copyFrom(@NonNull PersistentState other) {
+        long mStartTimeMs;
+
+        void copyFrom(@NonNull PersistentState other) {
             mServiceConnection = other.mServiceConnection;
             mCallback = other.mCallback;
             mInstanceToken = other.mInstanceToken;
+            mStartTimeMs = other.mStartTimeMs;
+        }
+
+        void noteTimeCreated(long startTimeMs) {
+            mStartTimeMs = startTimeMs;
         }
     }
     // Must only be touched on the UI thread
@@ -367,6 +375,11 @@ public class CaptivePortalLoginActivity extends Activity {
                 Log.e(TAG, "unknown menu action " + action);
             }
         }
+    }
+
+    @VisibleForTesting
+    public long getElapsedRealtime() {
+        return SystemClock.elapsedRealtime();
     }
 
     private static final class CaptivePortalCustomTabsServiceConnection extends
@@ -989,6 +1002,9 @@ public class CaptivePortalLoginActivity extends Activity {
         final PersistentState lastState = (PersistentState) getLastNonConfigurationInstance();
         if (null != lastState) {
             mPersistentState.copyFrom(lastState);
+        } else {
+            mPersistentState.noteTimeCreated(getElapsedRealtime());
+            mCaptivePortalLoginMetrics.logAppStart();
         }
         // Null CaptivePortal is unexpected. The following flow will need to access mCaptivePortal
         // to communicate with system. Thus, finish the activity.
@@ -1325,6 +1341,8 @@ public class CaptivePortalLoginActivity extends Activity {
                         CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_WANTED_AS_IS);
                 break;
         }
+        mCaptivePortalLoginMetrics.setDurationMs(
+                getElapsedRealtime() - mPersistentState.mStartTimeMs);
         mCaptivePortalLoginMetrics.statsWrite();
         if (result == Result.DISMISSED && mUsingCustomTabs) {
             // The user may resume their session in the custom tab portal from the background and

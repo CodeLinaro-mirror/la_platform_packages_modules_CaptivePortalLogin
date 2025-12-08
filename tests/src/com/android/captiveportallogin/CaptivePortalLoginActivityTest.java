@@ -76,6 +76,7 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -150,6 +151,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.MockitoAnnotations;
 import org.mockito.Spy;
 
@@ -215,6 +217,7 @@ public class CaptivePortalLoginActivityTest {
     private static String sMockCustomTabsPackageName;
     private static boolean sTestBrowserNotSupportCustomTab;
     private static ConditionVariable sDestroyedCv;
+    private static long sMockCurrentTimeMs = 0;
     @Rule
     public final SetFeatureFlagsRule mSetFeatureFlagsRule =
             new SetFeatureFlagsRule((name, enabled) -> {
@@ -328,6 +331,11 @@ public class CaptivePortalLoginActivityTest {
         @Override
         CaptivePortalLoginMetrics getCaptivePortalLoginMetrics() {
             return sMockCaptivePortalLoginMetrics;
+        }
+
+        @Override
+        public long getElapsedRealtime() {
+            return sMockCurrentTimeMs;
         }
 
         @Override
@@ -534,6 +542,7 @@ public class CaptivePortalLoginActivityTest {
         sMockCustomTabsPackageName = null;
         sTestBrowserNotSupportCustomTab = false;
         sDestroyedCv = new ConditionVariable(false);
+        sMockCurrentTimeMs = 0;
 
         MockitoAnnotations.initMocks(this);
         // Use a real (but test) network for the application. The application will pass this
@@ -1780,6 +1789,30 @@ public class CaptivePortalLoginActivityTest {
                         TEST_NC_SSID));
         assertEventuallyTrue("The remote view was not found.", TEST_TIMEOUT_MS,
                 () -> device.findObject(selector) != null);
+    }
+
+    @Test
+    public void testLoggingAppStartAndDurationMetrics() throws Exception {
+        final InOrder inOrder = inOrder(sMockCaptivePortalLoginMetrics);
+        // Start first
+        sMockCurrentTimeMs = 100;
+        initActivity(TEST_URL, true /* useClassicView */);
+        verifyWebViewInitialization();
+        inOrder.verify(sMockCaptivePortalLoginMetrics).logAppStart();
+
+        // Recreate
+        sMockCurrentTimeMs = 200;
+        mActivityScenario.recreate();
+        inOrder.verify(sMockCaptivePortalLoginMetrics, never()).logAppStart();
+
+        // Dismiss
+        sMockCurrentTimeMs = 300;
+        final NetworkCapabilities nc = new NetworkCapabilities();
+        nc.setCapability(NET_CAPABILITY_VALIDATED, true);
+        notifyValidatedChangedAndDismissed(nc);
+        checkActivityEventuallyDestroyed();
+        inOrder.verify(sMockCaptivePortalLoginMetrics).setDurationMs(200);
+        inOrder.verify(sMockCaptivePortalLoginMetrics).statsWrite();
     }
 
 }
