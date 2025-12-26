@@ -212,6 +212,7 @@ public class CaptivePortalLoginActivityTest {
     private static final ArrayMap<String, Boolean> sFeatureFlags = new ArrayMap<>();
     private static boolean sIsMultiNetworkingSupportedByProvider;
     private static String sMockCustomTabsPackageName;
+    private static boolean sTestBrowserNotSupportCustomTab;
     private static ConditionVariable sDestroyedCv;
     @Rule
     public final SetFeatureFlagsRule mSetFeatureFlagsRule =
@@ -330,6 +331,9 @@ public class CaptivePortalLoginActivityTest {
 
         @Override
         String getDefaultCustomTabsProviderPackage() {
+            if (sTestBrowserNotSupportCustomTab) {
+                return null;
+            }
             if (sMockCustomTabsPackageName != null) {
                 return sMockCustomTabsPackageName;
             }
@@ -347,6 +351,9 @@ public class CaptivePortalLoginActivityTest {
 
         @Override
         boolean isMultiNetworkingSupportedByProvider(final String defaultPackageName) {
+            if (sTestBrowserNotSupportCustomTab) {
+                return super.isMultiNetworkingSupportedByProvider(null);
+            }
             // We should always mock this method, otherwise the CCT will not be launched if the
             // chrome version is too old on the DUT and doesn't support multi-networking.
             // TODO: only mock if sMockCustomTabsPackageName is set when the browser is updated
@@ -524,6 +531,7 @@ public class CaptivePortalLoginActivityTest {
         sMockCustomTabsClient = mock(CustomTabsClient.class);
         sMockCaptivePortalLoginMetrics = mock(CaptivePortalLoginMetrics.class);
         sMockCustomTabsPackageName = null;
+        sTestBrowserNotSupportCustomTab = false;
         sDestroyedCv = new ConditionVariable(false);
 
         MockitoAnnotations.initMocks(this);
@@ -1522,6 +1530,14 @@ public class CaptivePortalLoginActivityTest {
         verifyUsingWebViewRatherThanCustomTabs();
     }
 
+    @Test
+    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
+    public void testLaunchWithNoCustomTabsProvider() throws Exception {
+        sTestBrowserNotSupportCustomTab = true;
+        initActivity(TEST_URL);
+        verifyWebViewInitialization();
+    }
+
     private void findMoreButtonAndClickTheMenuItem(final int menuItemIndex) throws Exception {
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.waitForIdle();
@@ -1753,4 +1769,18 @@ public class CaptivePortalLoginActivityTest {
                 CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_SUCCESS,
                 CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_PRIVATE_DNS_ENABLED_V_AND_BELOW);
     }
+
+    @Test
+    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
+    public void testSecondaryToolbarView() throws Exception {
+        assumeTrue(isChromeInstalled());
+        prepareRealCustomTabs();
+        final UiDevice device = UiDevice.getInstance(getInstrumentation());
+        final BySelector selector = By.clazz("android.widget.TextView")
+                .text(getInstrumentation().getContext().getString(R.string.action_bar_title,
+                        TEST_NC_SSID));
+        assertEventuallyTrue("The remote view was not found.", TEST_TIMEOUT_MS,
+                () -> device.findObject(selector) != null);
+    }
+
 }
