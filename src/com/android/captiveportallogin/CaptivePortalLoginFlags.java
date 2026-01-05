@@ -40,4 +40,19 @@ public class CaptivePortalLoginFlags {
      * or the custom tab is forced on (for example if the network operator opted in).
      */
     public static final String USE_FULL_CUSTOM_TAB = "use_full_custom_tab";
+
+    /**
+     * **TESTING AND DEBUGGING ONLY.**
+     *
+     * This flag bypasses the MultiNetwork API for Custom Tabs. It is a **debugging
+     * tool**, not a feature kill switch.
+     *
+     * **Purpose:** To verify if browser bugs are linked to the multi-network handling logic.
+     *
+     * **NOTE:** Setting this flag will break expected network functionality and
+     * should only be used in controlled tests (ideally when only one network,
+     * like Wi-Fi, is active, and mobile data/Private DNS are disconnected).
+     */
+    public static final String CAPTIVE_PORTAL_CUSTOM_TABS_WITH_MULTINETWORK_API =
+            "captive_portal_custom_tabs_with_multinetwork_api";
 }

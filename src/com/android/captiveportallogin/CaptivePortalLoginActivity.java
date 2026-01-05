@@ -20,6 +20,7 @@ import static android.net.ConnectivityManager.EXTRA_CAPTIVE_PORTAL_PROBE_SPEC;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED;
 
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.CAPTIVE_PORTAL_CUSTOM_TABS;
+import static com.android.captiveportallogin.CaptivePortalLoginFlags.CAPTIVE_PORTAL_CUSTOM_TABS_WITH_MULTINETWORK_API;
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.USE_ANY_CUSTOM_TAB_PROVIDER;
 import static com.android.captiveportallogin.CaptivePortalLoginFlags.USE_FULL_CUSTOM_TAB;
 import static com.android.captiveportallogin.DownloadService.isDirectlyOpenType;
@@ -79,6 +80,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.os.OutcomeReceiver;
 import android.os.ServiceSpecificException;
+import android.os.SystemClock;
 import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.provider.DocumentsContract;
@@ -227,6 +229,7 @@ public class CaptivePortalLoginActivity extends Activity {
     // should be fine.
     private boolean mCaptivePortalCustomTabsEnabled;
     private boolean mFullCustomTabEnabled;
+    private boolean mUseCustomTabWithMultiNetworkApi = true;
     @ChecksSdkIntAtLeast(api = Build.VERSION_CODES.S)
     private boolean mUsingCustomTabs;
     // Ensures that done() happens once exactly, handling concurrent callers with atomic operations.
@@ -250,10 +253,17 @@ public class CaptivePortalLoginActivity extends Activity {
         CaptivePortalCustomTabsServiceConnection mServiceConnection = null;
         CaptivePortalCustomTabsCallback mCallback = null;
         IBinder mInstanceToken = null;
-        public void copyFrom(@NonNull PersistentState other) {
+        long mStartTimeMs;
+
+        void copyFrom(@NonNull PersistentState other) {
             mServiceConnection = other.mServiceConnection;
             mCallback = other.mCallback;
             mInstanceToken = other.mInstanceToken;
+            mStartTimeMs = other.mStartTimeMs;
+        }
+
+        void noteTimeCreated(long startTimeMs) {
+            mStartTimeMs = startTimeMs;
         }
     }
     // Must only be touched on the UI thread
@@ -367,6 +377,11 @@ public class CaptivePortalLoginActivity extends Activity {
         }
     }
 
+    @VisibleForTesting
+    public long getElapsedRealtime() {
+        return SystemClock.elapsedRealtime();
+    }
+
     private static final class CaptivePortalCustomTabsServiceConnection extends
             CustomTabsServiceConnection {
         @NonNull private CaptivePortalLoginActivity mParent;
@@ -419,7 +434,6 @@ public class CaptivePortalLoginActivity extends Activity {
             // to call {@Link Intent#setPackage} to explicitly specify the package name
             // again.
             final CustomTabsIntent.Builder builder = new CustomTabsIntent.Builder(session)
-                    .setNetwork(mParent.mNetwork)
                     .setShareState(CustomTabsIntent.SHARE_STATE_OFF)
                     // Do not show a title to avoid pages pretend they are part of the Android
                     // system.
@@ -447,6 +461,10 @@ public class CaptivePortalLoginActivity extends Activity {
                     // close button icon once all custom tabs provider support this API.
                     .setCloseButtonEnabled(false);
 
+            if (mParent.mUseCustomTabWithMultiNetworkApi) {
+                builder.setNetwork(mParent.mNetwork);
+            }
+
             if (availableSpace > 0) {
                 builder.setInitialActivityHeightPx(availableSpace,
                         CustomTabsIntent.ACTIVITY_HEIGHT_FIXED);
@@ -473,6 +491,9 @@ public class CaptivePortalLoginActivity extends Activity {
             // same experience as the custom tabs browser.
             final String emptyReferrer = "";
             customTabsIntent.intent.putExtra(Intent.EXTRA_REFERRER, Uri.parse(emptyReferrer));
+            // Disable "Open in Browser" option in the toolbar menu.
+            customTabsIntent.intent.putExtra(CustomTabsIntent.EXTRA_OPEN_IN_BROWSER_STATE,
+                    CustomTabsIntent.OPEN_IN_BROWSER_STATE_OFF);
             // Replicate customTabsIntent.launchUrl, which calls intent.setData(url) and
             // ContextCompat.startActivity(context, intent, startAnimationBundle), but using
             // startActivityForResult to get notified when the activity is closed.
@@ -981,6 +1002,9 @@ public class CaptivePortalLoginActivity extends Activity {
         final PersistentState lastState = (PersistentState) getLastNonConfigurationInstance();
         if (null != lastState) {
             mPersistentState.copyFrom(lastState);
+        } else {
+            mPersistentState.noteTimeCreated(getElapsedRealtime());
+            mCaptivePortalLoginMetrics.logAppStart();
         }
         // Null CaptivePortal is unexpected. The following flow will need to access mCaptivePortal
         // to communicate with system. Thus, finish the activity.
@@ -1095,6 +1119,8 @@ public class CaptivePortalLoginActivity extends Activity {
             }
             initializeWebView();
         } else {
+            mUseCustomTabWithMultiNetworkApi = isFeatureNotChickenedOut(
+                    CAPTIVE_PORTAL_CUSTOM_TABS_WITH_MULTINETWORK_API);
             if (mFullCustomTabEnabled) {
                 setTheme(androidx.appcompat.R.style.Theme_AppCompat_DayNight_Dialog_Alert);
             }
@@ -1315,6 +1341,8 @@ public class CaptivePortalLoginActivity extends Activity {
                         CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_WANTED_AS_IS);
                 break;
         }
+        mCaptivePortalLoginMetrics.setDurationMs(
+                getElapsedRealtime() - mPersistentState.mStartTimeMs);
         mCaptivePortalLoginMetrics.statsWrite();
         if (result == Result.DISMISSED && mUsingCustomTabs) {
             // The user may resume their session in the custom tab portal from the background and

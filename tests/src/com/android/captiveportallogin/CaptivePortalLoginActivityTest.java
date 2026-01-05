@@ -76,6 +76,7 @@ import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -150,6 +151,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.MockitoAnnotations;
 import org.mockito.Spy;
 
@@ -162,6 +164,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -214,6 +217,7 @@ public class CaptivePortalLoginActivityTest {
     private static String sMockCustomTabsPackageName;
     private static boolean sTestBrowserNotSupportCustomTab;
     private static ConditionVariable sDestroyedCv;
+    private static long sMockCurrentTimeMs = 0;
     @Rule
     public final SetFeatureFlagsRule mSetFeatureFlagsRule =
             new SetFeatureFlagsRule((name, enabled) -> {
@@ -327,6 +331,11 @@ public class CaptivePortalLoginActivityTest {
         @Override
         CaptivePortalLoginMetrics getCaptivePortalLoginMetrics() {
             return sMockCaptivePortalLoginMetrics;
+        }
+
+        @Override
+        public long getElapsedRealtime() {
+            return sMockCurrentTimeMs;
         }
 
         @Override
@@ -472,7 +481,7 @@ public class CaptivePortalLoginActivityTest {
 
     @BeforeClass
     public static void setUpClass() throws Exception {
-        if (!isChromeInstalled()) {
+        if (!isChromeDefaultBrowser()) {
             return;
         }
         // TODO: to use --disable-fre and stop using the engagement signals.
@@ -533,6 +542,7 @@ public class CaptivePortalLoginActivityTest {
         sMockCustomTabsPackageName = null;
         sTestBrowserNotSupportCustomTab = false;
         sDestroyedCv = new ConditionVariable(false);
+        sMockCurrentTimeMs = 0;
 
         MockitoAnnotations.initMocks(this);
         // Use a real (but test) network for the application. The application will pass this
@@ -1384,6 +1394,8 @@ public class CaptivePortalLoginActivityTest {
         intended(allOf(
                 hasExtra(Intent.EXTRA_REFERRER, Uri.parse("")),
                 hasExtra(CustomTabsIntent.EXTRA_NETWORK, mNetwork),
+                hasExtra(CustomTabsIntent.EXTRA_OPEN_IN_BROWSER_STATE,
+                        CustomTabsIntent.OPEN_IN_BROWSER_STATE_OFF),
                 hasData(Uri.parse(TEST_URL))));
 
         // Send navigation start event, verify if the network will be reevaluated.
@@ -1446,7 +1458,7 @@ public class CaptivePortalLoginActivityTest {
     @Test
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCaptivePortalUsingCustomTabs_closeAppWhenClosingCustomTab() throws Exception {
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         prepareRealCustomTabs();
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.waitForIdle();
@@ -1573,14 +1585,10 @@ public class CaptivePortalLoginActivityTest {
         return cp;
     }
 
-    private static boolean isChromeInstalled() {
-        try {
-            final Context context = getInstrumentation().getContext();
-            context.getPackageManager().getPackageInfo("com.android.chrome", 0);
-            return true;
-        } catch (NameNotFoundException e) {
-            return false;
-        }
+    private static boolean isChromeDefaultBrowser() {
+        final String defaultBrowser = CustomTabsClient.getPackageName(
+                getApplicationContext(), null /* packages */);
+        return Objects.equals(defaultBrowser, "com.android.chrome");
     }
 
     @Test
@@ -1590,7 +1598,7 @@ public class CaptivePortalLoginActivityTest {
         // This test requires to launch a custom tab provider Chrome and depends on the
         // specific UI of chrome. For those platforms without chrome browser installed
         // such as aosp platforms, then skip this test.
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_DO_NOT_USE_THIS_NETWORK);
         checkActivityEventuallyDestroyed();
@@ -1605,7 +1613,7 @@ public class CaptivePortalLoginActivityTest {
         // This test requires to launch a custom tab provider Chrome and depends on the
         // specific UI of chrome. For those platforms without chrome browser installed
         // such as aosp platforms, then skip this test.
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         final MockCaptivePortal cp =
                 runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_THIS_NETWORK);
         checkActivityEventuallyDestroyed();
@@ -1628,7 +1636,7 @@ public class CaptivePortalLoginActivityTest {
         // This test requires to launch a custom tab provider Chrome and depends on the
         // specific UI of chrome. For those platforms without chrome browser installed
         // such as aosp platforms, then skip this test.
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         doNothing().when(sConnectivityManager).startCaptivePortalApp(any(), any());
         runCustomTabsMenuItemsTest(CUSTOM_TAB_MENU_ITEM_USE_CLASSIC_VIEW);
         final ArgumentCaptor<Bundle> bundleCaptor = ArgumentCaptor.forClass(Bundle.class);
@@ -1773,7 +1781,7 @@ public class CaptivePortalLoginActivityTest {
     @Test
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testSecondaryToolbarView() throws Exception {
-        assumeTrue(isChromeInstalled());
+        assumeTrue(isChromeDefaultBrowser());
         prepareRealCustomTabs();
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         final BySelector selector = By.clazz("android.widget.TextView")
@@ -1781,6 +1789,30 @@ public class CaptivePortalLoginActivityTest {
                         TEST_NC_SSID));
         assertEventuallyTrue("The remote view was not found.", TEST_TIMEOUT_MS,
                 () -> device.findObject(selector) != null);
+    }
+
+    @Test
+    public void testLoggingAppStartAndDurationMetrics() throws Exception {
+        final InOrder inOrder = inOrder(sMockCaptivePortalLoginMetrics);
+        // Start first
+        sMockCurrentTimeMs = 100;
+        initActivity(TEST_URL, true /* useClassicView */);
+        verifyWebViewInitialization();
+        inOrder.verify(sMockCaptivePortalLoginMetrics).logAppStart();
+
+        // Recreate
+        sMockCurrentTimeMs = 200;
+        mActivityScenario.recreate();
+        inOrder.verify(sMockCaptivePortalLoginMetrics, never()).logAppStart();
+
+        // Dismiss
+        sMockCurrentTimeMs = 300;
+        final NetworkCapabilities nc = new NetworkCapabilities();
+        nc.setCapability(NET_CAPABILITY_VALIDATED, true);
+        notifyValidatedChangedAndDismissed(nc);
+        checkActivityEventuallyDestroyed();
+        inOrder.verify(sMockCaptivePortalLoginMetrics).setDurationMs(200);
+        inOrder.verify(sMockCaptivePortalLoginMetrics).statsWrite();
     }
 
 }
