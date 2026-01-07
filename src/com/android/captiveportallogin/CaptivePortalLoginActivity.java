@@ -285,7 +285,13 @@ public class CaptivePortalLoginActivity extends Activity {
 
         @Override
         public void onNavigationEvent(int navigationEvent, @Nullable Bundle extras) {
+            if (!mParent.isDone.get()) {
+                // If done() has been called, no need to log further navigation events.
+                final String event = navigationEventToString(navigationEvent);
+                Log.d(TAG, "onNavigationEvent: " + event + " isPortal: " + mParent.mIsPortal);
+            }
             if (mParent.mIsPortal && navigationEvent == NAVIGATION_STARTED) {
+                Log.d(TAG, "CCT navigation trigger network reevaluation");
                 mParent.mCaptivePortal.reevaluateNetwork();
             }
             if (navigationEvent == TAB_HIDDEN && !mParent.mFullCustomTabEnabled) {
@@ -298,6 +304,18 @@ public class CaptivePortalLoginActivity extends Activity {
                         mParent.finishAndRemoveTask();
                     }
                 });
+            }
+        }
+
+        private static String navigationEventToString(int navigationEvent) {
+            switch (navigationEvent) {
+                case NAVIGATION_ABORTED: return "NAVIGATION_ABORTED";
+                case NAVIGATION_FAILED: return "NAVIGATION_FAILED";
+                case NAVIGATION_FINISHED: return "NAVIGATION_FINISHED";
+                case NAVIGATION_STARTED: return "NAVIGATION_STARTED";
+                case TAB_SHOWN: return "TAB_SHOWN";
+                case TAB_HIDDEN: return "TAB_HIDDEN";
+                default: return String.valueOf(navigationEvent);
             }
         }
 
@@ -1645,6 +1663,7 @@ public class CaptivePortalLoginActivity extends Activity {
         @Override
         public void onPageFinished(WebView view, String url) {
             mPagesLoaded++;
+            Log.d(TAG, "onPageFinished.");
             // getProgressBar() can't return null here because this method can only be
             // called in webview mode, not in custom tabs mode.
             getProgressBar().setVisibility(View.INVISIBLE);
