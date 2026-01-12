@@ -338,6 +338,16 @@ public class CaptivePortalLoginActivityTest {
             return sMockCurrentTimeMs;
         }
 
+        private boolean isPackageInstalled(String packageName) {
+            try {
+                getInstrumentation().getContext().getPackageManager().getPackageInfo(packageName,
+                        0);
+                return true;
+            } catch (NameNotFoundException e) {
+                return false;
+            }
+        }
+
         @Override
         String getDefaultCustomTabsProviderPackage() {
             if (sTestBrowserNotSupportCustomTab) {
@@ -346,7 +356,11 @@ public class CaptivePortalLoginActivityTest {
             if (sMockCustomTabsPackageName != null) {
                 return sMockCustomTabsPackageName;
             }
-            return super.getDefaultCustomTabsProviderPackage();
+            final String defaultPackage = super.getDefaultCustomTabsProviderPackage();
+            if (isPackageInstalled("com.android.chrome")) {
+                return "com.android.chrome";
+            }
+            return defaultPackage;
         }
 
         @Override
