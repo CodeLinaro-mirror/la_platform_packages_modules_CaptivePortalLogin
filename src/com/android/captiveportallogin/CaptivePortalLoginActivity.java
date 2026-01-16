@@ -1138,7 +1138,7 @@ public class CaptivePortalLoginActivity extends Activity {
             initializeWebView();
         } else {
             mUseCustomTabWithMultiNetworkApi = isFeatureNotChickenedOut(
-                    CAPTIVE_PORTAL_CUSTOM_TABS_WITH_MULTINETWORK_API);
+                    CAPTIVE_PORTAL_CUSTOM_TABS_WITH_MULTINETWORK_API) || !Build.isDebuggable();
             if (mFullCustomTabEnabled) {
                 setTheme(androidx.appcompat.R.style.Theme_AppCompat_DayNight_Dialog_Alert);
             }
