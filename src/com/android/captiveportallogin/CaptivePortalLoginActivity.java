@@ -290,7 +290,9 @@ public class CaptivePortalLoginActivity extends Activity {
                 final String event = navigationEventToString(navigationEvent);
                 Log.d(TAG, "onNavigationEvent: " + event + " isPortal: " + mParent.mIsPortal);
             }
-            if (mParent.mIsPortal && navigationEvent == NAVIGATION_STARTED) {
+            if (mParent.mIsPortal
+                    && (navigationEvent == NAVIGATION_STARTED
+                            || navigationEvent == NAVIGATION_FINISHED)) {
                 Log.d(TAG, "CCT navigation trigger network reevaluation");
                 mParent.mCaptivePortal.reevaluateNetwork();
             }

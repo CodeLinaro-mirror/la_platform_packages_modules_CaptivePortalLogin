@@ -27,6 +27,7 @@ import static android.net.ConnectivityManager.EXTRA_NETWORK;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED;
 import static android.view.accessibility.AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
 
+import static androidx.browser.customtabs.CustomTabsCallback.NAVIGATION_FINISHED;
 import static androidx.browser.customtabs.CustomTabsCallback.NAVIGATION_STARTED;
 import static androidx.browser.customtabs.CustomTabsService.ACTION_CUSTOM_TABS_CONNECTION;
 import static androidx.lifecycle.Lifecycle.State.DESTROYED;
@@ -1417,6 +1418,11 @@ public class CaptivePortalLoginActivityTest {
         assertEquals(1, cp.mReevaluateTimes);
         assertEquals(1, cp.mSetDelegateUidTimes);
 
+        // Send navigation finished event, verify that the network is reevaluated again.
+        callback.onNavigationEvent(NAVIGATION_FINISHED, null /* extras */);
+        assertEquals(2, cp.mReevaluateTimes);
+        assertEquals(1, cp.mSetDelegateUidTimes);
+
         // Simulate a success login with NET_CAPABILITY_VALIDATED callback.
         final NetworkCapabilities nc = new NetworkCapabilities();
         nc.setCapability(NET_CAPABILITY_VALIDATED, true);
@@ -1425,7 +1431,13 @@ public class CaptivePortalLoginActivityTest {
         // Send another navigation start event, verify that network won't be reevaluated
         // again after login.
         callback.onNavigationEvent(NAVIGATION_STARTED, null /* extras */);
-        assertEquals(1, cp.mReevaluateTimes);
+        assertEquals(2, cp.mReevaluateTimes);
+        assertEquals(1, cp.mSetDelegateUidTimes);
+
+        // Send another navigation finished event, verify that network won't be reevaluated
+        // again after login.
+        callback.onNavigationEvent(NAVIGATION_FINISHED, null /* extras */);
+        assertEquals(2, cp.mReevaluateTimes);
         assertEquals(1, cp.mSetDelegateUidTimes);
     }
 
