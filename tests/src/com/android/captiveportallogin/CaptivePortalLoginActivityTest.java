@@ -651,6 +651,11 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private void initActivity(String url, boolean useClassicView, Network network) {
+        initActivity(url, useClassicView, network, true /* notifyCapabilities */);
+    }
+
+    private void initActivity(String url, boolean useClassicView, Network network,
+            boolean notifyCapabilities) {
         final Context ctx = getInstrumentation().getContext();
         final Intent intent = makeIntent(ctx, url, useClassicView,
                 new MockCaptivePortal(), network);
@@ -662,10 +667,13 @@ public class CaptivePortalLoginActivityTest {
             // Dismiss dialogs or notification shade, so the test can interact with the activity.
             activity.sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
         });
-        // Simulate the capabilities update callback as soon as the captive portal is detected. This
-        // should generally happen on activity creation as the callback is registered there.
-        notifyValidatedChangedNotDone(network,
-                sConnectivityManager.getNetworkCapabilities(network));
+        if (notifyCapabilities) {
+            // Simulate the capabilities update callback as soon as the captive portal is detected.
+            // This should generally happen on activity creation as the callback is registered
+            // there.
+            notifyValidatedChangedNotDone(network,
+                    sConnectivityManager.getNetworkCapabilities(network));
+        }
         getInstrumentation().waitForIdleSync();
     }
 
@@ -1386,12 +1394,19 @@ public class CaptivePortalLoginActivityTest {
 
     private MockCaptivePortal prepareMockCustomTabs(
             boolean isDelegateUidSetSuccessfully, final LinkProperties linkProperties) {
+        return prepareMockCustomTabs(isDelegateUidSetSuccessfully, linkProperties,
+                true /* notifyCapabilities */);
+    }
+
+    private MockCaptivePortal prepareMockCustomTabs(
+            boolean isDelegateUidSetSuccessfully, final LinkProperties linkProperties,
+            boolean notifyCapabilities) {
         ActivityScenario.launch(RequestDismissKeyguardActivity.class);
         sIsMultiNetworkingSupportedByProvider = true;
         doReturn(linkProperties).when(sConnectivityManager).getLinkProperties(mNetwork);
 
         mockCustomTabsPackage();
-        initActivity(TEST_URL);
+        initActivity(TEST_URL, false /* useClassicView */, mNetwork, notifyCapabilities);
 
         final MockCaptivePortal cp = getCaptivePortal();
         // Wait for setDelegateUid to be called before accessing mDelegateUidReceiver
@@ -1517,6 +1532,28 @@ public class CaptivePortalLoginActivityTest {
             throws Exception {
         final LinkProperties lp = new LinkProperties();
         runCaptivePortalUsingCustomTabsTest(false /* isDelegateUidSetSuccessfully */, lp);
+    }
+
+    @Test
+    @IgnoreUpTo(Build.VERSION_CODES.R)
+    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
+    public void testCaptivePortalUsingCustomTabs_navigationEventBeforeCapabilitiesChanged() {
+        // Verify that onNavigationEvent does not crash when called before
+        // handleCapabilitiesChanged (mIsPortal is still null).
+        final LinkProperties lp = new LinkProperties();
+        // Skip the initial capabilities notification so mIsPortal remains null.
+        final MockCaptivePortal cp = prepareMockCustomTabs(
+                true /* isDelegateUidSetSuccessfully */, lp, false /* notifyCapabilities */);
+
+        final ArgumentCaptor<CustomTabsCallback> captor =
+                ArgumentCaptor.forClass(CustomTabsCallback.class);
+        verify(sMockCustomTabsClient, timeout(TEST_TIMEOUT_MS)).newSession(captor.capture());
+        final CustomTabsCallback callback = captor.getValue();
+        assertNotNull(callback);
+
+        callback.onNavigationEvent(NAVIGATION_STARTED, null /* extras */);
+        callback.onNavigationEvent(NAVIGATION_FINISHED, null /* extras */);
+        assertEquals(0, cp.mReevaluateTimes);
     }
 
     @Test
