@@ -285,12 +285,17 @@ public class CaptivePortalLoginActivity extends Activity {
 
         @Override
         public void onNavigationEvent(int navigationEvent, @Nullable Bundle extras) {
+            // If mIsPortal is null, the network may actually be a captive portal,
+            // but we haven't received the first onNetworkCapabilitiesChanged yet.
+            // We skip reevaluation in this state to avoid premature triggers before
+            // the network state is fully initialized.
+            final boolean shouldReevaluate = mParent.mIsPortal != null && mParent.mIsPortal;
             if (!mParent.isDone.get()) {
                 // If done() has been called, no need to log further navigation events.
                 final String event = navigationEventToString(navigationEvent);
-                Log.d(TAG, "onNavigationEvent: " + event + " isPortal: " + mParent.mIsPortal);
+                Log.d(TAG, "onNavigationEvent: " + event + " isPortal: " + shouldReevaluate);
             }
-            if (mParent.mIsPortal
+            if (shouldReevaluate
                     && (navigationEvent == NAVIGATION_STARTED
                             || navigationEvent == NAVIGATION_FINISHED)) {
                 Log.d(TAG, "CCT navigation trigger network reevaluation");
