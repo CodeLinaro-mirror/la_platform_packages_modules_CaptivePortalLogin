@@ -19,6 +19,7 @@ package com.android.captiveportallogin;
 import static android.Manifest.permission.MANAGE_TEST_NETWORKS;
 import static android.app.Activity.RESULT_OK;
 import static android.content.Intent.ACTION_CREATE_DOCUMENT;
+import static android.content.pm.PackageManager.FEATURE_WIFI;
 import static android.net.ConnectivityManager.ACTION_CAPTIVE_PORTAL_SIGN_IN;
 import static android.net.ConnectivityManager.EXTRA_CAPTIVE_PORTAL;
 import static android.net.ConnectivityManager.EXTRA_CAPTIVE_PORTAL_URL;
@@ -27,6 +28,7 @@ import static android.net.ConnectivityManager.EXTRA_NETWORK;
 import static android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED;
 import static android.view.accessibility.AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED;
 
+import static androidx.browser.customtabs.CustomTabsCallback.NAVIGATION_FINISHED;
 import static androidx.browser.customtabs.CustomTabsCallback.NAVIGATION_STARTED;
 import static androidx.browser.customtabs.CustomTabsService.ACTION_CUSTOM_TABS_CONNECTION;
 import static androidx.lifecycle.Lifecycle.State.DESTROYED;
@@ -74,6 +76,7 @@ import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
@@ -93,6 +96,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.net.CaptivePortal;
 import android.net.CaptivePortalData;
@@ -134,8 +138,10 @@ import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.UiSelector;
+import androidx.test.uiautomator.Until;
 
 import com.android.net.module.util.CollectionUtils;
+import com.android.testutils.ConnectUtil;
 import com.android.testutils.DevSdkIgnoreRule;
 import com.android.testutils.DevSdkIgnoreRule.IgnoreAfter;
 import com.android.testutils.DevSdkIgnoreRule.IgnoreUpTo;
@@ -201,6 +207,9 @@ public class CaptivePortalLoginActivityTest {
     private static final int CUSTOM_TAB_MENU_ITEM_USE_THIS_NETWORK = 1;
     private static final int CUSTOM_TAB_MENU_ITEM_USE_CLASSIC_VIEW = 2;
 
+    private final Context mContext = getInstrumentation().getContext();
+    private final PackageManager mPackageManager = mContext.getPackageManager();
+    private final ConnectUtil mConnectUtil = new ConnectUtil(mContext);
     private ActivityScenario<InstrumentedCaptivePortalLoginActivity> mActivityScenario;
     private Network mNetwork = new Network(TEST_NETID);
     private TestNetworkTracker mTestNetworkTracker;
@@ -338,6 +347,16 @@ public class CaptivePortalLoginActivityTest {
             return sMockCurrentTimeMs;
         }
 
+        private boolean isPackageInstalled(String packageName) {
+            try {
+                getInstrumentation().getContext().getPackageManager().getPackageInfo(packageName,
+                        0);
+                return true;
+            } catch (NameNotFoundException e) {
+                return false;
+            }
+        }
+
         @Override
         String getDefaultCustomTabsProviderPackage() {
             if (sTestBrowserNotSupportCustomTab) {
@@ -346,7 +365,11 @@ public class CaptivePortalLoginActivityTest {
             if (sMockCustomTabsPackageName != null) {
                 return sMockCustomTabsPackageName;
             }
-            return super.getDefaultCustomTabsProviderPackage();
+            final String defaultPackage = super.getDefaultCustomTabsProviderPackage();
+            if (isPackageInstalled("com.android.chrome")) {
+                return "com.android.chrome";
+            }
+            return defaultPackage;
         }
 
         @Override
@@ -605,10 +628,15 @@ public class CaptivePortalLoginActivityTest {
 
     private Intent makeIntent(Context context, String url, boolean useClassicView,
             Parcelable captivePortal) {
+        return makeIntent(context, url, useClassicView, captivePortal, mNetwork);
+    }
+
+    private Intent makeIntent(Context context, String url, boolean useClassicView,
+            Parcelable captivePortal, Network network) {
         return new Intent(context, InstrumentedCaptivePortalLoginActivity.class)
                 .setAction(ACTION_CAPTIVE_PORTAL_SIGN_IN)
                 .putExtra(EXTRA_CAPTIVE_PORTAL_URL, url)
-                .putExtra(EXTRA_NETWORK, mNetwork)
+                .putExtra(EXTRA_NETWORK, network)
                 .putExtra(EXTRA_CAPTIVE_PORTAL_USER_AGENT, TEST_USERAGENT)
                 .putExtra(EXTRA_CAPTIVE_PORTAL, captivePortal)
                 .putExtra(EXTRA_USE_CLASSIC_VIEW, useClassicView);
@@ -619,8 +647,18 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private void initActivity(String url, boolean useClassicView) {
+        initActivity(url, useClassicView, mNetwork);
+    }
+
+    private void initActivity(String url, boolean useClassicView, Network network) {
+        initActivity(url, useClassicView, network, true /* notifyCapabilities */);
+    }
+
+    private void initActivity(String url, boolean useClassicView, Network network,
+            boolean notifyCapabilities) {
         final Context ctx = getInstrumentation().getContext();
-        final Intent intent = makeIntent(ctx, url, useClassicView, new MockCaptivePortal());
+        final Intent intent = makeIntent(ctx, url, useClassicView,
+                new MockCaptivePortal(), network);
         mActivityScenario = ActivityScenario.launch(intent);
         mActivityScenario.onActivity(activity -> {
             getInstrumentation().getUiAutomation().adoptShellPermissionIdentity(
@@ -629,9 +667,13 @@ public class CaptivePortalLoginActivityTest {
             // Dismiss dialogs or notification shade, so the test can interact with the activity.
             activity.sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
         });
-        // Simulate the capabilities update callback as soon as the captive portal is detected. This
-        // should generally happen on activity creation as the callback is registered there.
-        notifyValidatedChangedNotDone(sConnectivityManager.getNetworkCapabilities(mNetwork));
+        if (notifyCapabilities) {
+            // Simulate the capabilities update callback as soon as the captive portal is detected.
+            // This should generally happen on activity creation as the callback is registered
+            // there.
+            notifyValidatedChangedNotDone(network,
+                    sConnectivityManager.getNetworkCapabilities(network));
+        }
         getInstrumentation().waitForIdleSync();
     }
 
@@ -759,7 +801,11 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private void notifyCapabilitiesChanged(final NetworkCapabilities nc) {
-        mActivityScenario.onActivity(a -> a.handleCapabilitiesChanged(mNetwork, nc));
+        notifyCapabilitiesChanged(mNetwork, nc);
+    }
+
+    private void notifyCapabilitiesChanged(final Network network, final NetworkCapabilities nc) {
+        mActivityScenario.onActivity(a -> a.handleCapabilitiesChanged(network, nc));
         getInstrumentation().waitForIdleSync();
     }
 
@@ -786,7 +832,12 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private void notifyValidatedChangedNotDone(final NetworkCapabilities nc) {
-        notifyCapabilitiesChanged(nc);
+        notifyValidatedChangedNotDone(mNetwork, nc);
+    }
+
+    private void notifyValidatedChangedNotDone(final Network network,
+            final NetworkCapabilities nc) {
+        notifyCapabilitiesChanged(network, nc);
         verifyNotDone();
     }
 
@@ -1343,14 +1394,24 @@ public class CaptivePortalLoginActivityTest {
 
     private MockCaptivePortal prepareMockCustomTabs(
             boolean isDelegateUidSetSuccessfully, final LinkProperties linkProperties) {
+        return prepareMockCustomTabs(isDelegateUidSetSuccessfully, linkProperties,
+                true /* notifyCapabilities */);
+    }
+
+    private MockCaptivePortal prepareMockCustomTabs(
+            boolean isDelegateUidSetSuccessfully, final LinkProperties linkProperties,
+            boolean notifyCapabilities) {
         ActivityScenario.launch(RequestDismissKeyguardActivity.class);
         sIsMultiNetworkingSupportedByProvider = true;
         doReturn(linkProperties).when(sConnectivityManager).getLinkProperties(mNetwork);
 
         mockCustomTabsPackage();
-        initActivity(TEST_URL);
+        initActivity(TEST_URL, false /* useClassicView */, mNetwork, notifyCapabilities);
 
         final MockCaptivePortal cp = getCaptivePortal();
+        // Wait for setDelegateUid to be called before accessing mDelegateUidReceiver
+        assertEventuallyTrue("setDelegateUid was not called", TEST_TIMEOUT_MS,
+                () -> cp.mDelegateUidReceiver != null);
         if (isDelegateUidSetSuccessfully) {
             mActivityScenario.onActivity(a -> cp.mDelegateUidReceiver.onResult(null));
         } else {
@@ -1361,10 +1422,17 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private MockCaptivePortal prepareRealCustomTabs() {
+        return prepareRealCustomTabs(TEST_URL, mNetwork);
+    }
+
+    private MockCaptivePortal prepareRealCustomTabs(String url, Network network) {
         ActivityScenario.launch(RequestDismissKeyguardActivity.class);
         sIsMultiNetworkingSupportedByProvider = true;
-        initActivity(TEST_URL);
+        initActivity(url, false /* useClassicView */, network);
         final MockCaptivePortal cp = getCaptivePortal();
+        // Wait for setDelegateUid to be called before accessing mDelegateUidReceiver
+        assertEventuallyTrue("setDelegateUid was not called", TEST_TIMEOUT_MS,
+                () -> cp.mDelegateUidReceiver != null);
         mActivityScenario.onActivity(a -> cp.mDelegateUidReceiver.onResult(null));
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.waitForIdle();
@@ -1403,6 +1471,11 @@ public class CaptivePortalLoginActivityTest {
         assertEquals(1, cp.mReevaluateTimes);
         assertEquals(1, cp.mSetDelegateUidTimes);
 
+        // Send navigation finished event, verify that the network is reevaluated again.
+        callback.onNavigationEvent(NAVIGATION_FINISHED, null /* extras */);
+        assertEquals(2, cp.mReevaluateTimes);
+        assertEquals(1, cp.mSetDelegateUidTimes);
+
         // Simulate a success login with NET_CAPABILITY_VALIDATED callback.
         final NetworkCapabilities nc = new NetworkCapabilities();
         nc.setCapability(NET_CAPABILITY_VALIDATED, true);
@@ -1411,7 +1484,13 @@ public class CaptivePortalLoginActivityTest {
         // Send another navigation start event, verify that network won't be reevaluated
         // again after login.
         callback.onNavigationEvent(NAVIGATION_STARTED, null /* extras */);
-        assertEquals(1, cp.mReevaluateTimes);
+        assertEquals(2, cp.mReevaluateTimes);
+        assertEquals(1, cp.mSetDelegateUidTimes);
+
+        // Send another navigation finished event, verify that network won't be reevaluated
+        // again after login.
+        callback.onNavigationEvent(NAVIGATION_FINISHED, null /* extras */);
+        assertEquals(2, cp.mReevaluateTimes);
         assertEquals(1, cp.mSetDelegateUidTimes);
     }
 
@@ -1453,6 +1532,28 @@ public class CaptivePortalLoginActivityTest {
             throws Exception {
         final LinkProperties lp = new LinkProperties();
         runCaptivePortalUsingCustomTabsTest(false /* isDelegateUidSetSuccessfully */, lp);
+    }
+
+    @Test
+    @IgnoreUpTo(Build.VERSION_CODES.R)
+    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
+    public void testCaptivePortalUsingCustomTabs_navigationEventBeforeCapabilitiesChanged() {
+        // Verify that onNavigationEvent does not crash when called before
+        // handleCapabilitiesChanged (mIsPortal is still null).
+        final LinkProperties lp = new LinkProperties();
+        // Skip the initial capabilities notification so mIsPortal remains null.
+        final MockCaptivePortal cp = prepareMockCustomTabs(
+                true /* isDelegateUidSetSuccessfully */, lp, false /* notifyCapabilities */);
+
+        final ArgumentCaptor<CustomTabsCallback> captor =
+                ArgumentCaptor.forClass(CustomTabsCallback.class);
+        verify(sMockCustomTabsClient, timeout(TEST_TIMEOUT_MS)).newSession(captor.capture());
+        final CustomTabsCallback callback = captor.getValue();
+        assertNotNull(callback);
+
+        callback.onNavigationEvent(NAVIGATION_STARTED, null /* extras */);
+        callback.onNavigationEvent(NAVIGATION_FINISHED, null /* extras */);
+        assertEquals(0, cp.mReevaluateTimes);
     }
 
     @Test
@@ -1815,4 +1916,46 @@ public class CaptivePortalLoginActivityTest {
         inOrder.verify(sMockCaptivePortalLoginMetrics).statsWrite();
     }
 
+    @Test
+    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
+    public void testCustomTabsHandlesCorsRequests() throws Exception {
+        assumeTrue(isChromeDefaultBrowser());
+        assumeTrue(mPackageManager.hasSystemFeature(FEATURE_WIFI));
+        final String testUrl = "https://captiveportaltest.androidtesting.org";
+        final Network wifiNetwork = mConnectUtil.ensureWifiValidated();
+
+        // The Activity will finish if the network is validated.
+        // Mock the capabilities to be NOT validated so the activity doesn't finish.
+        final NetworkCapabilities nonValidatedCaps = new NetworkCapabilities(
+                sConnectivityManager.getNetworkCapabilities(wifiNetwork));
+        nonValidatedCaps.removeCapability(NET_CAPABILITY_VALIDATED);
+        doReturn(nonValidatedCaps).when(sConnectivityManager).getNetworkCapabilities(wifiNetwork);
+
+        doAnswer(invocation -> {
+            ConnectivityManager.NetworkCallback callback = invocation.getArgument(1);
+            callback.onCapabilitiesChanged(wifiNetwork, nonValidatedCaps);
+            return null;
+        }).when(sConnectivityManager).registerNetworkCallback(any(), any(), any());
+        doNothing().when(sConnectivityManager).unregisterNetworkCallback(any(
+                ConnectivityManager.NetworkCallback.class));
+
+        prepareRealCustomTabs(testUrl, wifiNetwork);
+
+        final UiDevice device = UiDevice.getInstance(getInstrumentation());
+
+        final BySelector titleSelector = By.text("Test Captive Portal Login");
+        assertNotNull("Page title should be visible",
+                device.wait(Until.findObject(titleSelector), TEST_TIMEOUT_MS));
+
+        final BySelector corsSelector = By.text("CORS SUCCESS");
+        assertNotNull("CORS should succeed",
+                device.wait(Until.findObject(corsSelector), TEST_TIMEOUT_MS));
+
+        final BySelector buttonSelector = By.text("Connect");
+        assertNotNull("Connect button should exist",
+                device.wait(Until.findObject(buttonSelector), TEST_TIMEOUT_MS));
+
+        device.pressBack();
+        checkActivityEventuallyDestroyed();
+    }
 }
