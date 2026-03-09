@@ -19,6 +19,7 @@ package com.android.captiveportallogin;
 import static android.Manifest.permission.MANAGE_TEST_NETWORKS;
 import static android.app.Activity.RESULT_OK;
 import static android.content.Intent.ACTION_CREATE_DOCUMENT;
+import static android.content.pm.PackageManager.FEATURE_WIFI;
 import static android.net.ConnectivityManager.ACTION_CAPTIVE_PORTAL_SIGN_IN;
 import static android.net.ConnectivityManager.EXTRA_CAPTIVE_PORTAL;
 import static android.net.ConnectivityManager.EXTRA_CAPTIVE_PORTAL_URL;
@@ -54,7 +55,6 @@ import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLogi
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_FEATURE_NOT_ENABLED;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_NOT_SUPPORT_MULTI_NETWORK;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_PRIVATE_DNS_ENABLED_V_AND_BELOW;
-import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_RUNNING_ANDROID_R;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_UNKNOWN;
 import static com.android.os.corenetworking.captiveportallogin.CaptivePortalLoginStatsLog.CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_USE_CLASSIC_VIEW;
 import static com.android.testutils.MiscAsserts.assertEventuallyTrue;
@@ -70,11 +70,11 @@ import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.core.AllOf.allOf;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
@@ -94,6 +94,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.net.CaptivePortal;
 import android.net.CaptivePortalData;
@@ -104,7 +105,6 @@ import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.Uri;
-import android.net.wifi.WifiInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.ConditionVariable;
@@ -127,7 +127,6 @@ import androidx.browser.customtabs.CustomTabsSession;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.espresso.intent.Intents;
 import androidx.test.espresso.web.webdriver.Locator;
-import androidx.test.filters.SdkSuppress;
 import androidx.test.filters.SmallTest;
 import androidx.test.uiautomator.By;
 import androidx.test.uiautomator.BySelector;
@@ -135,8 +134,10 @@ import androidx.test.uiautomator.UiDevice;
 import androidx.test.uiautomator.UiObject;
 import androidx.test.uiautomator.UiObject2;
 import androidx.test.uiautomator.UiSelector;
+import androidx.test.uiautomator.Until;
 
 import com.android.net.module.util.CollectionUtils;
+import com.android.testutils.ConnectUtil;
 import com.android.testutils.DevSdkIgnoreRule;
 import com.android.testutils.DevSdkIgnoreRule.IgnoreAfter;
 import com.android.testutils.DevSdkIgnoreRule.IgnoreUpTo;
@@ -177,14 +178,12 @@ import java.util.function.Predicate;
 import fi.iki.elonen.NanoHTTPD;
 
 @RunWith(DevSdkIgnoreRunner.class)
-@IgnoreUpTo(Build.VERSION_CODES.R)
 @SmallTest
 public class CaptivePortalLoginActivityTest {
     private static final String TEST_URL = "http://android.test.com";
     private static final int TEST_NETID = 1234;
     private static final int TEST_CUSTOM_TABS_PROVIDER_UID = 12345;
     private static final String TEST_NC_SSID = "Test NetworkCapabilities SSID";
-    private static final String TEST_WIFIINFO_SSID = "Test Other SSID";
     private static final String TEST_URL_QUERY = "testquery";
     private static final long TEST_TIMEOUT_MS = 30_000L;
     private static final LinkAddress TEST_LINKADDR = new LinkAddress(
@@ -202,6 +201,9 @@ public class CaptivePortalLoginActivityTest {
     private static final int CUSTOM_TAB_MENU_ITEM_USE_THIS_NETWORK = 1;
     private static final int CUSTOM_TAB_MENU_ITEM_USE_CLASSIC_VIEW = 2;
 
+    private final Context mContext = getInstrumentation().getContext();
+    private final PackageManager mPackageManager = mContext.getPackageManager();
+    private final ConnectUtil mConnectUtil = new ConnectUtil(mContext);
     private ActivityScenario<InstrumentedCaptivePortalLoginActivity> mActivityScenario;
     private Network mNetwork = new Network(TEST_NETID);
     private TestNetworkTracker mTestNetworkTracker;
@@ -252,10 +254,7 @@ public class CaptivePortalLoginActivityTest {
             }
         }
 
-        @Override
-        WifiInfo getWifiConnectionInfo() {
-            return makeWifiInfo();
-        }
+
 
         @Override
         public ComponentName startForegroundService(Intent service) {
@@ -583,23 +582,7 @@ public class CaptivePortalLoginActivityTest {
         Intents.init();
     }
 
-    private static WifiInfo makeWifiInfo() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            fail("Only Q should be using WifiInfo; R+ gets the wifi SSID via NetworkCapabilities");
-        }
 
-        // WifiInfo did not have a builder before R. Use non-public APIs on Q to set SSID.
-        try {
-            final WifiInfo info = WifiInfo.class.getConstructor().newInstance();
-            final Class<?> wifiSsidClass = Class.forName("android.net.wifi.WifiSsid");
-            final Object wifiSsid = wifiSsidClass.getMethod("createFromAsciiEncoded",
-                    String.class).invoke(null, TEST_WIFIINFO_SSID);
-            WifiInfo.class.getMethod("setSSID", wifiSsidClass).invoke(info, wifiSsid);
-            return info;
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError("Failed to create WifiInfo on Q", e);
-        }
-    }
 
     @After
     public void tearDown() throws Exception {
@@ -620,10 +603,15 @@ public class CaptivePortalLoginActivityTest {
 
     private Intent makeIntent(Context context, String url, boolean useClassicView,
             Parcelable captivePortal) {
+        return makeIntent(context, url, useClassicView, captivePortal, mNetwork);
+    }
+
+    private Intent makeIntent(Context context, String url, boolean useClassicView,
+            Parcelable captivePortal, Network network) {
         return new Intent(context, InstrumentedCaptivePortalLoginActivity.class)
                 .setAction(ACTION_CAPTIVE_PORTAL_SIGN_IN)
                 .putExtra(EXTRA_CAPTIVE_PORTAL_URL, url)
-                .putExtra(EXTRA_NETWORK, mNetwork)
+                .putExtra(EXTRA_NETWORK, network)
                 .putExtra(EXTRA_CAPTIVE_PORTAL_USER_AGENT, TEST_USERAGENT)
                 .putExtra(EXTRA_CAPTIVE_PORTAL, captivePortal)
                 .putExtra(EXTRA_USE_CLASSIC_VIEW, useClassicView);
@@ -634,8 +622,18 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private void initActivity(String url, boolean useClassicView) {
+        initActivity(url, useClassicView, mNetwork);
+    }
+
+    private void initActivity(String url, boolean useClassicView, Network network) {
+        initActivity(url, useClassicView, network, true /* notifyCapabilities */);
+    }
+
+    private void initActivity(String url, boolean useClassicView, Network network,
+            boolean notifyCapabilities) {
         final Context ctx = getInstrumentation().getContext();
-        final Intent intent = makeIntent(ctx, url, useClassicView, new MockCaptivePortal());
+        final Intent intent = makeIntent(ctx, url, useClassicView,
+                new MockCaptivePortal(), network);
         mActivityScenario = ActivityScenario.launch(intent);
         mActivityScenario.onActivity(activity -> {
             getInstrumentation().getUiAutomation().adoptShellPermissionIdentity(
@@ -644,9 +642,13 @@ public class CaptivePortalLoginActivityTest {
             // Dismiss dialogs or notification shade, so the test can interact with the activity.
             activity.sendBroadcast(new Intent(Intent.ACTION_CLOSE_SYSTEM_DIALOGS));
         });
-        // Simulate the capabilities update callback as soon as the captive portal is detected. This
-        // should generally happen on activity creation as the callback is registered there.
-        notifyValidatedChangedNotDone(sConnectivityManager.getNetworkCapabilities(mNetwork));
+        if (notifyCapabilities) {
+            // Simulate the capabilities update callback as soon as the captive portal is detected.
+            // This should generally happen on activity creation as the callback is registered
+            // there.
+            notifyValidatedChangedNotDone(network,
+                    sConnectivityManager.getNetworkCapabilities(network));
+        }
         getInstrumentation().waitForIdleSync();
     }
 
@@ -678,17 +680,10 @@ public class CaptivePortalLoginActivityTest {
     private void configNonVpnNetwork() {
         final Network[] networks = new Network[] {new Network(mNetwork)};
         doReturn(networks).when(sConnectivityManager).getAllNetworks();
-        final NetworkCapabilities nonVpnCapabilities;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            // SSID and NetworkCapabilities builder was added in R
-            nonVpnCapabilities = new NetworkCapabilities.Builder()
-                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                    .setSsid(TEST_NC_SSID)
-                    .build();
-        } else {
-            nonVpnCapabilities = new NetworkCapabilities()
-                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI);
-        }
+        final NetworkCapabilities nonVpnCapabilities = new NetworkCapabilities.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .setSsid(TEST_NC_SSID)
+                .build();
         doReturn(nonVpnCapabilities).when(sConnectivityManager).getNetworkCapabilities(
                 mNetwork);
         doReturn(new LinkProperties()).when(sConnectivityManager).getLinkProperties(mNetwork);
@@ -756,15 +751,7 @@ public class CaptivePortalLoginActivityTest {
                         (useVpnMatcher ? vpnMatcher : linkMatcher))));
     }
 
-    @Test @SdkSuppress(maxSdkVersion = Build.VERSION_CODES.Q)
-    public void testVpnMsgOrLinkToBrowser_BeforeR() throws Exception {
-        // Before Android R, CaptivePortalLogin cannot call isAlwaysOnVpnLockdownEnabled() due to
-        // permission denied. So CaptivePortalLogin doesn't know the status of VPN always-on, and it
-        // simply provides a link for user to open the browser as usual.
-        runVpnMsgOrLinkToBrowser(false /* useVpnMatcher */);
-    }
-
-    @Test @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
+    @Test
     public void testVpnMsgOrLinkToBrowser() throws Exception {
         // After Android R(including), DevicePolicyManager allows the caller who has the
         // PERMISSION_MAINLINE_NETWORK_STACK can call the isAlwaysOnVpnLockdownEnabled() to get the
@@ -774,7 +761,11 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private void notifyCapabilitiesChanged(final NetworkCapabilities nc) {
-        mActivityScenario.onActivity(a -> a.handleCapabilitiesChanged(mNetwork, nc));
+        notifyCapabilitiesChanged(mNetwork, nc);
+    }
+
+    private void notifyCapabilitiesChanged(final Network network, final NetworkCapabilities nc) {
+        mActivityScenario.onActivity(a -> a.handleCapabilitiesChanged(network, nc));
         getInstrumentation().waitForIdleSync();
     }
 
@@ -801,7 +792,12 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private void notifyValidatedChangedNotDone(final NetworkCapabilities nc) {
-        notifyCapabilitiesChanged(nc);
+        notifyValidatedChangedNotDone(mNetwork, nc);
+    }
+
+    private void notifyValidatedChangedNotDone(final Network network,
+            final NetworkCapabilities nc) {
+        notifyCapabilitiesChanged(network, nc);
         verifyNotDone();
     }
 
@@ -810,8 +806,8 @@ public class CaptivePortalLoginActivityTest {
                 sDestroyedCv.block(TEST_TIMEOUT_MS));
     }
 
-    @Test @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
-    public void testNetworkCapabilitiesUpdate_RAndLater() throws Exception {
+    @Test
+    public void testNetworkCapabilitiesUpdate() throws Exception {
         initActivity(TEST_URL);
 
         // NetworkCapabilities updates w/o NET_CAPABILITY_VALIDATED.
@@ -823,16 +819,6 @@ public class CaptivePortalLoginActivityTest {
         notifyValidatedChangedAndDismissed(nc);
 
         checkActivityEventuallyDestroyed();
-    }
-
-    @Test @SdkSuppress(maxSdkVersion = Build.VERSION_CODES.Q)
-    public void testNetworkCapabilitiesUpdate_Q() throws Exception {
-        initActivity(TEST_URL);
-
-        final NetworkCapabilities nc = new NetworkCapabilities();
-        nc.setCapability(NET_CAPABILITY_VALIDATED, true);
-        // Auto-dismiss should not happen.
-        notifyValidatedChangedNotDone(nc);
     }
 
     private HttpServer runCustomSchemeTest(String linkUri) throws Exception {
@@ -1040,17 +1026,7 @@ public class CaptivePortalLoginActivityTest {
                         TEST_FRIENDLY_NAME), activity.getActionBar().getTitle()));
     }
 
-    @Test @SdkSuppress(maxSdkVersion = Build.VERSION_CODES.Q)
-    public void testWifiSsid_Q() throws Exception {
-        initActivity("https://portal.example.com/");
-        mActivityScenario.onActivity(activity ->
-                assertEquals(activity.getActionBar().getTitle(),
-                        getInstrumentation().getContext().getString(R.string.action_bar_title,
-                                TEST_WIFIINFO_SSID)));
-
-    }
-
-    @Test @SdkSuppress(minSdkVersion = Build.VERSION_CODES.R)
+    @Test
     public void testWifiSsid() throws Exception {
         initActivity("https://portal.example.com/");
         mActivityScenario.onActivity(activity ->
@@ -1059,20 +1035,7 @@ public class CaptivePortalLoginActivityTest {
                                 TEST_NC_SSID)));
     }
 
-    /**
-     * Check whether the device release or development API level is strictly higher than the passed
-     * in level.
-     *
-     * @return True if the device supports an SDK that has or will have a higher version number,
-     *         even if still in development.
-     */
-    private static boolean isReleaseOrDevelopmentApiAbove(int apiLevel) {
-        // In-development API after n may have SDK_INT == n and CODENAME != REL
-        // Stable API n has SDK_INT == n and CODENAME == REL.
-        final int devApiLevel = Build.VERSION.SDK_INT
-                + ("REL".equals(Build.VERSION.CODENAME) ? 0 : 1);
-        return devApiLevel > apiLevel;
-    }
+
 
     private static boolean isEventually(BooleanSupplier condition, long timeout)
             throws InterruptedException {
@@ -1358,14 +1321,24 @@ public class CaptivePortalLoginActivityTest {
 
     private MockCaptivePortal prepareMockCustomTabs(
             boolean isDelegateUidSetSuccessfully, final LinkProperties linkProperties) {
+        return prepareMockCustomTabs(isDelegateUidSetSuccessfully, linkProperties,
+                true /* notifyCapabilities */);
+    }
+
+    private MockCaptivePortal prepareMockCustomTabs(
+            boolean isDelegateUidSetSuccessfully, final LinkProperties linkProperties,
+            boolean notifyCapabilities) {
         ActivityScenario.launch(RequestDismissKeyguardActivity.class);
         sIsMultiNetworkingSupportedByProvider = true;
         doReturn(linkProperties).when(sConnectivityManager).getLinkProperties(mNetwork);
 
         mockCustomTabsPackage();
-        initActivity(TEST_URL);
+        initActivity(TEST_URL, false /* useClassicView */, mNetwork, notifyCapabilities);
 
         final MockCaptivePortal cp = getCaptivePortal();
+        // Wait for setDelegateUid to be called before accessing mDelegateUidReceiver
+        assertEventuallyTrue("setDelegateUid was not called", TEST_TIMEOUT_MS,
+                () -> cp.mDelegateUidReceiver != null);
         if (isDelegateUidSetSuccessfully) {
             mActivityScenario.onActivity(a -> cp.mDelegateUidReceiver.onResult(null));
         } else {
@@ -1376,10 +1349,17 @@ public class CaptivePortalLoginActivityTest {
     }
 
     private MockCaptivePortal prepareRealCustomTabs() {
+        return prepareRealCustomTabs(TEST_URL, mNetwork);
+    }
+
+    private MockCaptivePortal prepareRealCustomTabs(String url, Network network) {
         ActivityScenario.launch(RequestDismissKeyguardActivity.class);
         sIsMultiNetworkingSupportedByProvider = true;
-        initActivity(TEST_URL);
+        initActivity(url, false /* useClassicView */, network);
         final MockCaptivePortal cp = getCaptivePortal();
+        // Wait for setDelegateUid to be called before accessing mDelegateUidReceiver
+        assertEventuallyTrue("setDelegateUid was not called", TEST_TIMEOUT_MS,
+                () -> cp.mDelegateUidReceiver != null);
         mActivityScenario.onActivity(a -> cp.mDelegateUidReceiver.onResult(null));
         final UiDevice device = UiDevice.getInstance(getInstrumentation());
         device.waitForIdle();
@@ -1464,7 +1444,6 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCaptivePortalUsingCustomTabs_privateDnsOff_bypassVpnOrPrivateDnsSuccess()
             throws Exception {
@@ -1473,12 +1452,32 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCaptivePortalUsingCustomTabs_privateDnsOff_bypassVpnOrPrivateDnsFailure()
             throws Exception {
         final LinkProperties lp = new LinkProperties();
         runCaptivePortalUsingCustomTabsTest(false /* isDelegateUidSetSuccessfully */, lp);
+    }
+
+    @Test
+    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
+    public void testCaptivePortalUsingCustomTabs_navigationEventBeforeCapabilitiesChanged() {
+        // Verify that onNavigationEvent does not crash when called before
+        // handleCapabilitiesChanged (mIsPortal is still null).
+        final LinkProperties lp = new LinkProperties();
+        // Skip the initial capabilities notification so mIsPortal remains null.
+        final MockCaptivePortal cp = prepareMockCustomTabs(
+                true /* isDelegateUidSetSuccessfully */, lp, false /* notifyCapabilities */);
+
+        final ArgumentCaptor<CustomTabsCallback> captor =
+                ArgumentCaptor.forClass(CustomTabsCallback.class);
+        verify(sMockCustomTabsClient, timeout(TEST_TIMEOUT_MS)).newSession(captor.capture());
+        final CustomTabsCallback callback = captor.getValue();
+        assertNotNull(callback);
+
+        callback.onNavigationEvent(NAVIGATION_STARTED, null /* extras */);
+        callback.onNavigationEvent(NAVIGATION_FINISHED, null /* extras */);
+        assertEquals(0, cp.mReevaluateTimes);
     }
 
     @Test
@@ -1497,7 +1496,6 @@ public class CaptivePortalLoginActivityTest {
     // on R and below, OutcomeReceiver class is not available yet which is required for Custom
     // tab implementation.
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @IgnoreAfter(Build.VERSION_CODES.VANILLA_ICE_CREAM)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCaptivePortalUsingCustomTabs_privateDnsOnWhileCustomTabActive()
@@ -1536,13 +1534,7 @@ public class CaptivePortalLoginActivityTest {
         verifyWebViewInitialization();
     }
 
-    @Test
-    @IgnoreAfter(Build.VERSION_CODES.R)
-    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
-    public void testCaptivePortalUsingCustomTabs_setDelegateUidNotSupported_R() throws Exception {
-        sIsMultiNetworkingSupportedByProvider = true;
-        verifyUsingWebViewRatherThanCustomTabs();
-    }
+
 
     @Test
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = false)
@@ -1618,7 +1610,6 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCustomTabsMenuItems_clickDoNotUseThisNetwork() throws Exception {
         // This test requires to launch a custom tab provider Chrome and depends on the
@@ -1633,7 +1624,6 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCustomTabsMenuItems_clickUseThisNetwork() throws Exception {
         // This test requires to launch a custom tab provider Chrome and depends on the
@@ -1656,7 +1646,6 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCustomTabsMenuItems_clickUseOldInterface() throws Exception {
         // This test requires to launch a custom tab provider Chrome and depends on the
@@ -1672,7 +1661,6 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testStartActivityWithUseClassicView() throws Exception {
         // Simulate launching a new CaptivePortalLoginActivity with intent including
@@ -1710,7 +1698,6 @@ public class CaptivePortalLoginActivityTest {
     }
 
     @Test
-    @IgnoreUpTo(Build.VERSION_CODES.R)
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
     public void testCaptivePortalMetrics_useCustomTabs_dismissed() throws Exception {
         final LinkProperties lp = new LinkProperties();
@@ -1739,20 +1726,7 @@ public class CaptivePortalLoginActivityTest {
         assertEquals(cp.mUseTimes, 0);
     }
 
-    @Test
-    @IgnoreAfter(Build.VERSION_CODES.R)
-    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
-    public void testCaptivePortalMetrics_fallbackToWebview_R() throws Exception {
-        sIsMultiNetworkingSupportedByProvider = true;
-        verifyUsingWebViewRatherThanCustomTabs();
 
-        final NetworkCapabilities nc = new NetworkCapabilities();
-        nc.setCapability(NET_CAPABILITY_VALIDATED, true);
-        notifyValidatedChangedAndDismissed(nc);
-        verifyCaptivePortalLoginMetrics(true /* expectWebview */,
-                CAPTIVE_PORTAL_LOGIN_REPORTED__PORTAL_RESULT__CAPTIVE_PORTAL_RESULT_SUCCESS,
-                CAPTIVE_PORTAL_LOGIN_REPORTED__REASON__REASON_RUNNING_ANDROID_R);
-    }
 
     @Test
     @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
@@ -1841,4 +1815,46 @@ public class CaptivePortalLoginActivityTest {
         inOrder.verify(sMockCaptivePortalLoginMetrics).statsWrite();
     }
 
+    @Test
+    @FeatureFlag(name = CAPTIVE_PORTAL_CUSTOM_TABS, enabled = true)
+    public void testCustomTabsHandlesCorsRequests() throws Exception {
+        assumeTrue(isChromeDefaultBrowser());
+        assumeTrue(mPackageManager.hasSystemFeature(FEATURE_WIFI));
+        final String testUrl = "https://captiveportaltest.androidtesting.org";
+        final Network wifiNetwork = mConnectUtil.ensureWifiValidated();
+
+        // The Activity will finish if the network is validated.
+        // Mock the capabilities to be NOT validated so the activity doesn't finish.
+        final NetworkCapabilities nonValidatedCaps = new NetworkCapabilities(
+                sConnectivityManager.getNetworkCapabilities(wifiNetwork));
+        nonValidatedCaps.removeCapability(NET_CAPABILITY_VALIDATED);
+        doReturn(nonValidatedCaps).when(sConnectivityManager).getNetworkCapabilities(wifiNetwork);
+
+        doAnswer(invocation -> {
+            ConnectivityManager.NetworkCallback callback = invocation.getArgument(1);
+            callback.onCapabilitiesChanged(wifiNetwork, nonValidatedCaps);
+            return null;
+        }).when(sConnectivityManager).registerNetworkCallback(any(), any(), any());
+        doNothing().when(sConnectivityManager).unregisterNetworkCallback(any(
+                ConnectivityManager.NetworkCallback.class));
+
+        prepareRealCustomTabs(testUrl, wifiNetwork);
+
+        final UiDevice device = UiDevice.getInstance(getInstrumentation());
+
+        final BySelector titleSelector = By.text("Test Captive Portal Login");
+        assertNotNull("Page title should be visible",
+                device.wait(Until.findObject(titleSelector), TEST_TIMEOUT_MS));
+
+        final BySelector corsSelector = By.text("CORS SUCCESS");
+        assertNotNull("CORS should succeed",
+                device.wait(Until.findObject(corsSelector), TEST_TIMEOUT_MS));
+
+        final BySelector buttonSelector = By.text("Connect");
+        assertNotNull("Connect button should exist",
+                device.wait(Until.findObject(buttonSelector), TEST_TIMEOUT_MS));
+
+        device.pressBack();
+        checkActivityEventuallyDestroyed();
+    }
 }

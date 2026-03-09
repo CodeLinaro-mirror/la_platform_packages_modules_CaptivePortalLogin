@@ -70,8 +70,6 @@ import android.net.Uri;
 import android.net.captiveportal.CaptivePortalProbeSpec;
 import android.net.http.SslCertificate;
 import android.net.http.SslError;
-import android.net.wifi.WifiInfo;
-import android.net.wifi.WifiManager;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Bundle;
@@ -221,7 +219,6 @@ public class CaptivePortalLoginActivity extends Activity {
     private NetworkCallback mNetworkCallback;
     private ConnectivityManager mCm;
     private DevicePolicyManager mDpm;
-    private WifiManager mWifiManager;
     private boolean mLaunchBrowser = false;
     private MyWebViewClient mWebViewClient;
     private SwipeRefreshLayout mSwipeRefreshLayout;
@@ -285,12 +282,17 @@ public class CaptivePortalLoginActivity extends Activity {
 
         @Override
         public void onNavigationEvent(int navigationEvent, @Nullable Bundle extras) {
+            // If mIsPortal is null, the network may actually be a captive portal,
+            // but we haven't received the first onNetworkCapabilitiesChanged yet.
+            // We skip reevaluation in this state to avoid premature triggers before
+            // the network state is fully initialized.
+            final boolean shouldReevaluate = mParent.mIsPortal != null && mParent.mIsPortal;
             if (!mParent.isDone.get()) {
                 // If done() has been called, no need to log further navigation events.
                 final String event = navigationEventToString(navigationEvent);
-                Log.d(TAG, "onNavigationEvent: " + event + " isPortal: " + mParent.mIsPortal);
+                Log.d(TAG, "onNavigationEvent: " + event + " isPortal: " + shouldReevaluate);
             }
-            if (mParent.mIsPortal
+            if (shouldReevaluate
                     && (navigationEvent == NAVIGATION_STARTED
                             || navigationEvent == NAVIGATION_FINISHED)) {
                 Log.d(TAG, "CCT navigation trigger network reevaluation");
@@ -1035,7 +1037,6 @@ public class CaptivePortalLoginActivity extends Activity {
         }
         mCm = getSystemService(ConnectivityManager.class);
         mDpm = getSystemService(DevicePolicyManager.class);
-        mWifiManager = getSystemService(WifiManager.class);
         mNetwork = getIntent().getParcelableExtra(ConnectivityManager.EXTRA_NETWORK);
         mNetwork = mNetwork.getPrivateDnsBypassingCopy();
         final CaptivePortalData capportData = getCapportData();
@@ -1552,11 +1553,7 @@ public class CaptivePortalLoginActivity extends Activity {
     private URL deduceUrlFromIntentString(@Nullable final String url) {
         if (url == null) { // TODO: Have a metric to know how often empty url happened.
             // ConnectivityManager#getCaptivePortalServerUrl is deprecated starting with Android R.
-            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.Q) {
-                return makeURL(DEFAULT_CAPTIVE_PORTAL_HTTP_URL);
-            } else {
-                return makeURL(mCm.getCaptivePortalServerUrl());
-            }
+            return makeURL(DEFAULT_CAPTIVE_PORTAL_HTTP_URL);
         }
         return makeURL(url);
     }
@@ -2064,25 +2061,13 @@ public class CaptivePortalLoginActivity extends Activity {
             return mVenueFriendlyName;
         }
 
-        // SSID is only available in NetworkCapabilities from R
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            if (mWifiManager == null) {
-                return null;
-            }
-            final WifiInfo wifiInfo = getWifiConnectionInfo();
-            return removeDoubleQuotes(wifiInfo.getSSID());
-        }
-
         if (nc == null) {
             return null;
         }
         return removeDoubleQuotes(nc.getSsid());
     }
 
-    @VisibleForTesting
-    WifiInfo getWifiConnectionInfo() {
-        return mWifiManager.getConnectionInfo();
-    }
+
 
     private static String removeDoubleQuotes(String string) {
         if (string == null) return null;
